@@ -1,0 +1,33 @@
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments (uv creates .venv; uv.lock is committed, not ignored)
+.venv/
+venv/
+env/
+
+# Test, coverage, and type/lint caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Environment variables / secrets (e.g. LLM provider API keys)
+.env
+.env.*
+
+# OS / editor cruft
+.DS_Store
+*.swp
