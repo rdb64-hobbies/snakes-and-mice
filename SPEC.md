@@ -92,8 +92,14 @@ Note: `B3` lies on **row B** and **column 3**, and on **neither diagonal**.
 ## 6. A turn / a move
 
 - Players alternate turns, **Mouse first**: Mouse, Snake, Mouse, Snake, ...
-- On a turn, the player makes one **move**, which consists of **placing exactly
+- On a turn, the player makes one **move**, which normally consists of **placing
   two of their own pieces** on **two distinct empty cells**.
+- **Single-piece exception.** A move may instead place a **single** piece, but
+  *only* when that one piece **ends the game** — i.e. it completes a line (a win)
+  or fills the board into a cat's game. This mirrors §7: if the first piece
+  already ends the game, the second is never placed, so a one-piece move is the
+  honest representation of that turn. Placing a single piece while the game is
+  still in play is a fault (`WRONG_PIECE_COUNT`, §9).
 - Placed pieces are permanent; they are never moved or removed.
 
 The board starts with 24 empty cells and 2 pieces are placed per move, so a full
@@ -108,7 +114,8 @@ or diagonal) with their own pieces.
 
 - Win detection happens **after each individual piece placement**. If a player's
   *first* of two pieces completes a line, they win immediately and the second
-  piece is not placed.
+  piece is not placed. A player that foresees this may submit a **single-piece
+  move** (§6) for that winning piece alone.
 - The pre-placed snake at `B3` counts toward the Snake player's lines.
 
 ## 8. Cat's game (draw)
@@ -124,30 +131,50 @@ game (every line is dead) and is reported as such.
 
 ## 9. Illegal moves
 
-The engine validates every move it receives. A move is **illegal** if:
+A move can be illegal for these reasons:
 
 - a target cell is off the board,
 - a target cell is not empty,
-- the two target cells are the same cell, or
-- fewer or more than two cells are specified.
+- the two target cells are the same cell,
+- the wrong number of cells is specified (a move must place one or two pieces), or
+- a **single**-piece move that does **not** end the game (a single piece is legal
+  only when it wins or completes a cat's game — see §6).
 
-These are the reasons the **engine can detect** from a well-formed move. A player
-may also fail *before* producing a move at all — e.g. an LLM whose output cannot
-be interpreted as a move — which the engine cannot see; that case is
-**player-reported** and handled the same way (see §10, "Game results and
-termination").
+**Strong typing makes the structural cases unrepresentable.** `Cell` and `Move`
+are validated value types (§10, "Core types"): a `Cell` cannot be constructed
+off-board, and a `Move` cannot be constructed unless it is **one or two** cells
+(and, if two, *distinct*). Attempting either raises `IllegalMove` at
+**construction time**. As a result:
+
+- **Structural illegality** (off-board, duplicate cells, or a count that is
+  neither one nor two) is caught when a `Cell`/`Move` is *built*, before it ever
+  reaches the engine. A player that builds moves from trusted code (scripted,
+  algorithmic) will simply never hit this. A player that builds moves from
+  **untrusted external output — the LLM player — must catch these construction
+  errors and report them** as faults through the move-production mechanism
+  (`MoveUnavailable`, §10), because only it can associate the failure with a
+  `PlayerFaultReason`.
+- **Stateful illegality** cannot be a type invariant — it depends on the current
+  board — so the **engine** checks it when applying a move and raises
+  `IllegalMove`. There are two such cases: `CELL_NOT_EMPTY` (a target cell is
+  occupied), and `WRONG_PIECE_COUNT` when a **single-piece** move is well-formed
+  but leaves the game *in play* (a single piece is legal only when it ends the
+  game). Structurally, `WRONG_PIECE_COUNT` therefore has **two provenances**:
+  construction-time (zero or three-plus cells) and apply-time (one cell, game not
+  over).
 
 An illegal move is an **error** — never silently ignored or re-prompted. It is
-handled at two layers:
+surfaced by exceptions and handled at two layers:
 
-- **Move application (low level):** raises an `IllegalMove` exception. This is
-  what makes a scripted player's bug fail loudly in direct engine tests.
-- **Game loop:** catches that exception (and the player-reported
-  `MoveUnavailable` exception) and ends the game with a terminal `GameResult`
-  (see §10) whose `termination` is `PLAYER_FAULT`. This is an **error termination
-  with no winner** (`winner = None`) — distinct from a cat's game, and *not* a
-  win for the opponent. The result carries the facts of the offense so agents
-  such as the LLM player can be informed via `end_game`.
+- **Construction / move application (low level):** raises an `IllegalMove`
+  exception (structural at construction; `CELL_NOT_EMPTY` at engine apply-time).
+  This makes bugs fail loudly in direct unit tests.
+- **Game loop:** catches `IllegalMove` (from applying a move) and the
+  player-reported `MoveUnavailable` (from `choose_move`) and ends the game with a
+  terminal `GameResult` (see §10) whose `termination` is `PLAYER_FAULT`. This is
+  an **error termination with no winner** (`winner = None`) — distinct from a
+  cat's game, and *not* a win for the opponent. The result carries the facts of
+  the fault so agents such as the LLM player can be informed via `end_game`.
 
 ## 10. Player abstraction
 
@@ -159,7 +186,21 @@ enforcement of the contract (an unimplemented method fails loudly, matching the
 error-first stance of §9), and want to share behavior and construction across
 players.
 
-### Player-managed vs. authoritative state
+### Core types
+
+The domain is modeled with validated value types, so illegal states are
+unrepresentable (see §9):
+
+- `Side` — an enum, `MOUSE` or `SNAKE`; `Side.other` gives the opponent. A cell's
+  occupant is a `Side` (the side whose piece sits there) or `None` when empty.
+- `Cell` — a board coordinate; a frozen dataclass validated to be **on the
+  board** at construction. Parses/renders labels like `C3`.
+- `Move` — a frozen dataclass validated at construction to be **one or two
+  `Cell`s** (and, if two, distinct), in the order the player plays them. A
+  single-cell move is structurally valid but *legal* only when that one piece
+  ends the game; the engine enforces that at apply-time (§9).
+
+Constructing an invalid `Cell` or `Move` raises `IllegalMove` (§9).
 
 - **Each player manages its own board state.** A player keeps its own internal
   representation of the board, updated as moves happen. Because of this,
@@ -278,12 +319,18 @@ class Termination(Enum):
     PLAYER_FAULT     # a player failed to complete a valid turn — error, no winner
 
 class PlayerFaultReason(Enum):
-    # Engine-detected: the player returned a well-formed move that breaks the
-    # rules. `attempted_move` is present.
+    # Structural (caught at Cell/Move construction). For trusted players this
+    # never happens; a player building moves from untrusted output (the LLM
+    # player) catches the construction error and reports the matching reason.
     OFF_BOARD          # a target cell is off the board
-    CELL_NOT_EMPTY     # a target cell is already occupied
     DUPLICATE_CELLS    # the two target cells are the same
-    WRONG_PIECE_COUNT  # not exactly two cells were played
+    WRONG_PIECE_COUNT  # wrong number of pieces played. Two provenances:
+                       #   - construction-time: zero or three-plus cells (structural)
+                       #   - apply-time: a single-piece move that did NOT end the
+                       #     game (engine-detected, stateful; attempted_move present)
+    # Engine-detected, stateful: only knowable against the current board.
+    # `attempted_move` is present.
+    CELL_NOT_EMPTY     # a target cell is already occupied
     # Player-reported: the player could not deliver a well-formed move at all, so
     # no `Move` ever reached the engine. `attempted_move` is None.
     UNPARSEABLE_OUTPUT # output could not be interpreted as a move — e.g. an LLM's
@@ -315,15 +362,21 @@ Notes:
 - `winner` is `None` for **both** a cat's game and a player fault; the two are
   distinguished by `termination`. A player fault is **not** a win for the
   opponent.
-- **`PLAYER_FAULT` covers three kinds of the same underlying failure** — "the
+- **`PLAYER_FAULT` covers several kinds of the same underlying failure** — "the
   player did not complete a valid turn":
-  - *Engine-detected rule violation* (the four rule reasons): the player returns
-    a well-formed `Move`, the engine's validation rejects it and raises
-    `IllegalMove`, and the engine fills in the `reason` and `attempted_move`.
-  - *Player-reported* (e.g. `UNPARSEABLE_OUTPUT`): the player cannot even form a
-    `Move`, so it raises a dedicated exception (e.g. `MoveUnavailable(reason)`)
-    from `choose_move`. The game loop catches it the same way and ends the game.
-    Here the **player** supplies the `reason` — the engine cannot know it.
+  - *Structural, construction-time* (`OFF_BOARD`, `DUPLICATE_CELLS`, and
+    `WRONG_PIECE_COUNT` for zero or three-plus cells): building the `Cell`/`Move`
+    raises `IllegalMove`. Trusted players never trip this; a player parsing
+    untrusted output (the LLM player) catches it and reports the reason via
+    `MoveUnavailable`.
+  - *Engine-detected, stateful* (`CELL_NOT_EMPTY`, and `WRONG_PIECE_COUNT` for a
+    single-piece move that leaves the game in play): the player returns a
+    well-typed `Move`, but the current board makes it illegal — a target cell is
+    occupied, or the lone piece did not end the game. The engine's apply-time
+    check raises `IllegalMove`, filling in `reason` and `attempted_move`.
+  - *Player-reported* (`UNPARSEABLE_OUTPUT`, …): the player cannot even form a
+    `Move`, so it raises `MoveUnavailable(reason)` from `choose_move`. Here the
+    **player** supplies the `reason` — the engine cannot know it.
   - *Engine-detected misread* (`WRONG_OUTCOME_CLAIM`): the move is legal, but the
     player's `claimed_outcome` disagrees with the true outcome. The engine
     records the legal `attempted_move` plus `claimed_outcome` and
