@@ -31,3 +31,6 @@ htmlcov/
 # OS / editor cruft
 .DS_Store
 *.swp
+
+# Claude Code session/config directory
+.claude/
