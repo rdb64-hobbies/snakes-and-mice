@@ -1,13 +1,13 @@
-"""Tests for the engine game loop and turn evaluation."""
+"""Tests for the game loop and turn evaluation."""
 
 from __future__ import annotations
 
 from snakes_and_mice import (
     Board,
     Cell,
-    Decision,
     GameResult,
     Move,
+    MoveChoice,
     MoveUnavailable,
     Player,
     PlayerFaultReason,
@@ -17,14 +17,14 @@ from snakes_and_mice import (
     TurnOutcome,
     play_game,
 )
-from snakes_and_mice.engine import _apply_and_evaluate
+from snakes_and_mice.game import _apply_and_evaluate
 
 
 class RecordingPlayer(ScriptedPlayer):
     """A scripted player that records lifecycle callbacks for assertions."""
 
-    def __init__(self, decisions: list[Decision], name: str) -> None:
-        super().__init__(decisions, name)
+    def __init__(self, choices: list[MoveChoice], name: str) -> None:
+        super().__init__(choices, name)
         self.started_side: Side | None = None
         self.observed: list[tuple[Side, Move]] = []
         self.result: GameResult | None = None
@@ -49,7 +49,7 @@ class SilentPlayer(Player):
     def observe_move(self, side: Side, move: Move) -> None:
         return None
 
-    def choose_move(self) -> Decision:
+    def choose_move(self) -> MoveChoice:
         raise MoveUnavailable(PlayerFaultReason.UNPARSEABLE_OUTPUT, "no output")
 
 
@@ -57,9 +57,9 @@ def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
     """Mouse completes row A; snake plays harmlessly along row E."""
     mouse = ScriptedPlayer(
         [
-            Decision(Move.from_labels("A1", "A2")),
-            Decision(Move.from_labels("A3", "A4")),
-            Decision(Move.from_labels("B1", "A5"), TurnOutcome.WIN),
+            MoveChoice(Move.from_labels("A1", "A2")),
+            MoveChoice(Move.from_labels("A3", "A4")),
+            MoveChoice(Move.from_labels("B1", "A5"), TurnOutcome.WIN),
         ],
         name="Mouse",
     )
@@ -79,7 +79,7 @@ def test_mouse_wins_by_completing_a_line() -> None:
 
 
 def test_correct_win_claim_does_not_fault() -> None:
-    # The winning decision claims WIN; ground truth agrees, so no fault.
+    # The winning choice claims WIN; ground truth agrees, so no fault.
     mouse, snake = _mouse_wins_row_a()
     result = play_game(mouse, snake)
     assert result.termination is Termination.LINE_COMPLETED
@@ -88,14 +88,14 @@ def test_correct_win_claim_does_not_fault() -> None:
 def test_lifecycle_callbacks_are_delivered() -> None:
     mouse = RecordingPlayer(
         [
-            Decision(Move.from_labels("A1", "A2")),
-            Decision(Move.from_labels("A3", "A4")),
-            Decision(Move.from_labels("B1", "A5"), TurnOutcome.WIN),
+            MoveChoice(Move.from_labels("A1", "A2")),
+            MoveChoice(Move.from_labels("A3", "A4")),
+            MoveChoice(Move.from_labels("B1", "A5"), TurnOutcome.WIN),
         ],
         name="Mouse",
     )
     snake = RecordingPlayer(
-        [Decision(Move.from_labels("E1", "E2")), Decision(Move.from_labels("E3", "E4"))],
+        [MoveChoice(Move.from_labels("E1", "E2")), MoveChoice(Move.from_labels("E3", "E4"))],
         name="Snake",
     )
     result = play_game(mouse, snake)
@@ -159,7 +159,7 @@ def test_single_piece_move_that_completes_cats_game_is_legal() -> None:
 
 
 def test_single_piece_move_still_in_play_is_a_fault() -> None:
-    mouse = ScriptedPlayer([Decision(Move.from_labels("A1"))], name="Mouse")
+    mouse = ScriptedPlayer([MoveChoice(Move.from_labels("A1"))], name="Mouse")
     snake = ScriptedPlayer([], name="Snake")
     result = play_game(mouse, snake)
     assert result.termination is Termination.PLAYER_FAULT
@@ -171,7 +171,7 @@ def test_single_piece_move_still_in_play_is_a_fault() -> None:
 
 def test_cell_not_empty_is_a_fault() -> None:
     # Mouse's first move targets B3, which the snake already occupies.
-    mouse = ScriptedPlayer([Decision(Move.from_labels("B3", "A1"))], name="Mouse")
+    mouse = ScriptedPlayer([MoveChoice(Move.from_labels("B3", "A1"))], name="Mouse")
     snake = ScriptedPlayer([], name="Snake")
     result = play_game(mouse, snake)
     assert result.termination is Termination.PLAYER_FAULT
@@ -185,7 +185,7 @@ def test_cell_not_empty_is_a_fault() -> None:
 def test_wrong_outcome_claim_is_a_fault() -> None:
     # A legal, non-winning move claimed as a WIN.
     mouse = ScriptedPlayer(
-        [Decision(Move.from_labels("A1", "A2"), TurnOutcome.WIN)], name="Mouse"
+        [MoveChoice(Move.from_labels("A1", "A2"), TurnOutcome.WIN)], name="Mouse"
     )
     snake = ScriptedPlayer([], name="Snake")
     result = play_game(mouse, snake)

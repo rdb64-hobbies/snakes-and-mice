@@ -1,15 +1,15 @@
 """Snakes and Mice — a game engine and pluggable players.
 
 A 5×5 tic-tac-toe variant used as an LLM reasoning benchmark. The rules engine
-(:func:`~snakes_and_mice.engine.play_game`) is the single source of truth;
+(:func:`~snakes_and_mice.game.play_game`) is the single source of truth;
 players plug in through the :class:`~snakes_and_mice.players.Player` ABC.
 """
 
 from __future__ import annotations
 
 from .board import Board
-from .core import BOARD_SIZE, Cell, Decision, Move, Side, TurnOutcome
-from .engine import play_game
+from .core import BOARD_SIZE, Cell, Move, MoveChoice, Side, TurnOutcome
+from .game import play_game
 from .faults import (
     IllegalMove,
     MoveUnavailable,
@@ -23,10 +23,10 @@ __all__ = [
     "BOARD_SIZE",
     "Board",
     "Cell",
-    "Decision",
     "GameResult",
     "IllegalMove",
     "Move",
+    "MoveChoice",
     "MoveUnavailable",
     "Player",
     "PlayerFaultDetail",

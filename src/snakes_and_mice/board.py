@@ -63,7 +63,7 @@ class Board:
     def winner(self) -> Side | None:
         """The side occupying all cells of some line, or ``None``."""
         for line in LINES:
-            first = self._cells.get(line[0])
+            first: Side | None = self._cells.get(line[0])
             if first is not None and all(
                 self._cells.get(cell) is first for cell in line[1:]
             ):

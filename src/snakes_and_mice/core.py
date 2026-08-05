@@ -64,7 +64,7 @@ class Cell:
         :class:`~snakes_and_mice.faults.IllegalMove` (``OFF_BOARD``) if the
         parsed coordinate lies off the board.
         """
-        text = label.strip().upper()
+        text: str = label.strip().upper()
         if len(text) != 2 or not ("A" <= text[0] <= "Z") or not text[1].isdigit():
             raise ValueError(f"invalid cell label: {label!r}")
         return cls(ord(text[0]) - ord("A"), int(text[1]) - 1)
@@ -120,7 +120,7 @@ class TurnOutcome(Enum):
 
 
 @dataclass(frozen=True)
-class Decision:
+class MoveChoice:
     """What a player returns from ``choose_move``: a move and an optional claim.
 
     ``claimed_outcome`` is the player's assessment of the state *after* its move.

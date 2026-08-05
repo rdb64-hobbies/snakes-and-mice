@@ -52,7 +52,7 @@ class IllegalMove(SnakesAndMiceError):
     """
 
     def __init__(self, reason: PlayerFaultReason, message: str | None = None) -> None:
-        self.reason = reason
+        self.reason: PlayerFaultReason = reason
         super().__init__(message or reason.name)
 
 
@@ -64,5 +64,5 @@ class MoveUnavailable(SnakesAndMiceError):
     """
 
     def __init__(self, reason: PlayerFaultReason, message: str | None = None) -> None:
-        self.reason = reason
+        self.reason: PlayerFaultReason = reason
         super().__init__(message or reason.name)

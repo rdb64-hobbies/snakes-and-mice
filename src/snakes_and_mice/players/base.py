@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ..core import Decision, Move, Side
+from ..core import Move, MoveChoice, Side
 from ..result import GameResult
 
 
@@ -24,7 +24,7 @@ class Player(ABC):
     """Base class every player implementation extends."""
 
     def __init__(self, name: str | None = None) -> None:
-        self.name = name or type(self).__name__
+        self.name: str = name or type(self).__name__
 
     @abstractmethod
     def start_game(self, side: Side) -> None:
@@ -35,7 +35,7 @@ class Player(ABC):
         """Observe a move just played by ``side`` (including the player's own)."""
 
     @abstractmethod
-    def choose_move(self) -> Decision:
+    def choose_move(self) -> MoveChoice:
         """Choose this turn's move.
 
         Raise :class:`~snakes_and_mice.faults.MoveUnavailable` to concede that no

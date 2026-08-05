@@ -235,10 +235,10 @@ class Player(ABC):
         update its own board. A player is notified of its own moves too."""
 
     @abstractmethod
-    def choose_move(self) -> Decision:
-        """Return a `Decision` — a legal move (two distinct empty cells) for this
+    def choose_move(self) -> MoveChoice:
+        """Return a `MoveChoice` — a legal move (two distinct empty cells) for this
         player's side, plus an optional self-assessment of the resulting outcome
-        (see "The move decision" below). Based on the player's own managed board
+        (see "The move choice" below). Based on the player's own managed board
         state. If the player cannot produce a well-formed move at all (e.g. an
         LLM's output fails to parse), it raises `MoveUnavailable(reason)` instead
         of returning."""
@@ -251,9 +251,9 @@ class Player(ABC):
 optional hook with a default no-op body. Further optional hooks may be added
 later if a player type needs them, without breaking existing players.
 
-### The move decision and self-assessed outcome
+### The move choice and self-assessed outcome
 
-`choose_move` returns a `Decision`: the chosen move plus an **optional**
+`choose_move` returns a `MoveChoice`: the chosen move plus an **optional**
 self-assessment of the resulting game state.
 
 ```python
@@ -263,7 +263,7 @@ class TurnOutcome(Enum):
     IN_PLAY     # the mover believes the game continues
 
 @dataclass(frozen=True)
-class Decision:
+class MoveChoice:
     move: Move
     claimed_outcome: TurnOutcome | None = None   # the mover's self-assessment;
                                                  # None if it does not self-assess
@@ -286,7 +286,7 @@ class Decision:
 
 1. Call `start_game(side)` on both players; each seeds a fresh board including the
    snake at `B3`.
-2. Ask the player to move: `choose_move()`, which returns a `Decision` (a move
+2. Ask the player to move: `choose_move()`, which returns a `MoveChoice` (a move
    and an optional `claimed_outcome`). If instead it raises `MoveUnavailable`,
    the game ends with a `PLAYER_FAULT` result — skip to step 5.
 3. Validate the move against the engine's authoritative board. If it is illegal,
@@ -465,8 +465,11 @@ A **text CLI**:
 
 Rough module layout (subject to change once we start coding):
 
-- `engine` — board representation, move validation, applying moves, win/draw
-  detection, and the game loop that alternates players.
+- `board` / `core` — board representation, move validation, applying moves, and
+  win/draw detection.
+- `game` — the loop that runs a single game, alternating the two players. Matches
+  (repeated games) and tournaments will live in their own modules alongside it;
+  together these form the "engine" that drives play.
 - `players` — the player interface and the scripted bot.
 - `cli` — rendering the board and reporting outcomes.
 

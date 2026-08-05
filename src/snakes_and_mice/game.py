@@ -8,7 +8,7 @@ never guesses intent or assigns blame beyond what it observes.
 from __future__ import annotations
 
 from .board import Board
-from .core import Decision, Move, Side, TurnOutcome
+from .core import Move, MoveChoice, Side, TurnOutcome
 from .faults import IllegalMove, MoveUnavailable, PlayerFaultReason
 from .players.base import Player
 from .result import GameResult, PlayerFaultDetail, Termination
@@ -20,54 +20,57 @@ def play_game(mouse: Player, snake: Player) -> GameResult:
     ``mouse`` moves first. Every termination — win, cat's game, or fault — is
     reported to both players via ``end_game`` before this returns.
     """
-    board = Board()
+    board: Board = Board()
     players: dict[Side, Player] = {Side.MOUSE: mouse, Side.SNAKE: snake}
+    player: Player
     for side, player in players.items():
         player.start_game(side)
 
-    to_move = Side.MOUSE
+    to_move: Side = Side.MOUSE
     while True:
         player = players[to_move]
 
         try:
-            decision = player.choose_move()
+            choice: MoveChoice = player.choose_move()
         except MoveUnavailable as exc:
             return _finish(
                 players, _fault(to_move, exc.reason)
             )
 
         try:
-            actual = _apply_and_evaluate(board, to_move, decision.move)
+            actual_outcome: TurnOutcome = _apply_and_evaluate(
+                board, to_move, choice.move
+            )
         except IllegalMove as exc:
             return _finish(
                 players,
-                _fault(to_move, exc.reason, attempted_move=decision.move),
+                _fault(to_move, exc.reason, attempted_move=choice.move),
             )
 
         if (
-            decision.claimed_outcome is not None
-            and decision.claimed_outcome is not actual
+            choice.claimed_outcome is not None
+            and choice.claimed_outcome is not actual_outcome
         ):
             return _finish(
                 players,
                 _fault(
                     to_move,
                     PlayerFaultReason.WRONG_OUTCOME_CLAIM,
-                    attempted_move=decision.move,
-                    claimed_outcome=decision.claimed_outcome,
-                    actual_outcome=actual,
+                    attempted_move=choice.move,
+                    claimed_outcome=choice.claimed_outcome,
+                    actual_outcome=actual_outcome,
                 ),
             )
 
         for observer in players.values():
-            observer.observe_move(to_move, decision.move)
+            observer.observe_move(to_move, choice.move)
 
-        if actual is TurnOutcome.WIN:
+        if actual_outcome is TurnOutcome.WIN:
             return _finish(
                 players,
                 GameResult(Termination.LINE_COMPLETED, winner=to_move),
             )
-        if actual is TurnOutcome.CATS_GAME:
+        if actual_outcome is TurnOutcome.CATS_GAME:
             return _finish(players, GameResult(Termination.CATS_GAME))
 
         to_move = to_move.other
