@@ -426,6 +426,12 @@ board, move (a pair of cells), and game result.
 - **Environment & dependencies:** `uv`.
 - **Version control:** `git`.
 - **Tests:** `pytest`, running deterministic games driven by scripted players.
+- **Strong typing.** Use static typing wherever possible: complete type hints on
+  all public functions, methods, and data structures; `enum`s and (frozen)
+  `dataclass`es for domain types (as already used for `Side`, `Move`,
+  `TurnOutcome`, `PlayerFaultReason`, `GameResult`, etc.); and a static type
+  checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
+  strict configuration.
 
 ## 14. Out of scope for v1
 
