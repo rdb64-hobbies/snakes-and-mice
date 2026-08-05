@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from snakes_and_mice import Board, Cell, IllegalMove, PlayerFaultReason, Side
+from snakes_and_mice import (
+    BOARD_SIZE,
+    Board,
+    Cell,
+    IllegalMove,
+    PlayerFaultReason,
+    Side,
+)
 
 # A full board with every line mixed (no winner) — used for the draw test.
 # Rows A..E, S = snake, M = mouse. B3 is the snake's seed.
@@ -55,6 +62,20 @@ def test_place_on_occupied_raises() -> None:
 
 def test_no_winner_initially() -> None:
     assert Board().winner() is None
+
+
+def test_empty_cells_excludes_seed_and_occupied() -> None:
+    board = Board()
+    empties = board.empty_cells()
+    # Every cell but the seeded snake at B3.
+    assert Cell.from_label("B3") not in empties
+    assert len(empties) == BOARD_SIZE * BOARD_SIZE - 1
+    # Row-major order: the first empty cell is A1.
+    assert empties[0] == Cell.from_label("A1")
+
+    board.place(Cell.from_label("A1"), Side.MOUSE)
+    assert Cell.from_label("A1") not in board.empty_cells()
+    assert len(board.empty_cells()) == BOARD_SIZE * BOARD_SIZE - 2
 
 
 def test_winner_by_row() -> None:

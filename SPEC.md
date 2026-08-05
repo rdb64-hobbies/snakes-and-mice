@@ -307,6 +307,39 @@ own-moves and opponent-moves in different methods, and (b) the engine loop stays
 a uniform "validate → apply → notify all," with no special case for the mover. A
 player that does not care simply no-ops on its own move.
 
+### Watching a game (observation)
+
+Separately from the players, the engine accepts an optional **observer** — a
+spectator driven in lockstep with the game so a caller can watch or log it turn
+by turn without being a player. `play_game(mouse, snake, observer=None)` calls
+three hooks, each of which defaults to a no-op:
+
+```python
+class GameObserver:
+    def on_game_start(self, names: dict[Side, str], board: Board) -> None: ...
+    def on_move_start(self, side: Side, board: Board) -> None: ...
+    def on_move_end(self, side: Side, move: Move, board: Board,
+                    outcome: TurnOutcome) -> None: ...
+    def on_game_end(self, result: GameResult) -> None: ...
+```
+
+Unlike a player, an observer never influences play; it only *receives* the
+engine's authoritative board (read-only).
+
+A move is bracketed by **two** hooks. `on_move_start` fires at the top of every
+turn, *before* the player is asked for a move, so a watcher can show whose turn
+it is the moment it begins. `on_move_end` fires once per **accepted** move —
+including the terminal one — after it has been applied, carrying the move and the
+resulting outcome. Splitting the two matters when producing a move is slow: an
+LLM player may take seconds to respond, and a spectator wants to see "Snake is
+thinking…" immediately, not only once the move lands. A turn that ends in a fault
+fires `on_move_start` but **no** `on_move_end` (no move was accepted); the fault
+detail arrives with `on_game_end`.
+
+This keeps rendering out of the engine and out of the players: the board is a
+**fact** the engine already owns, so a watcher reads it directly rather than
+reconstructing it from observed moves.
+
 ### Game results and termination
 
 Every game ends in one of three ways, reported to both players via
@@ -422,23 +455,29 @@ implementation order:
    ordered sequence of moves; returns them one at a time. Used to drive
    deterministic games for testing the rules and engine (win detection, cat's
    game, illegal-move handling, etc.).
-2. **Human player.** Reads a move interactively (input format `C3 D4`, see §15).
-3. **LLM player.** Chooses moves by querying a large language model, with support
+2. **Random player.** Plays uniformly at random among legal moves: each turn it
+   places two pieces on two randomly chosen empty cells (or a single piece on the
+   last empty cell, which necessarily ends the game). It tracks its own board
+   through `observe_move` and makes no outcome claim. A trivial baseline, a
+   sparring partner for the stronger players, and a convenient driver for
+   non-deterministic tests. Its randomness is drawn from an injectable
+   `random.Random`, so a seeded instance produces fully reproducible games.
+3. **Human player.** Reads a move interactively (input format `C3 D4`, see §15).
+4. **LLM player.** Chooses moves by querying a large language model, with support
    for a **range of LLM providers and models**. This player warrants its own
    detailed sub-spec (provider abstraction, prompting, parsing/validating the
    model's move, retry/fallback on invalid output, cost/latency, etc.), to be
    written later.
-4. **Algorithmic player.** Searches the game tree — e.g. alpha–beta (minimax with
+5. **Algorithmic player.** Searches the game tree — e.g. alpha–beta (minimax with
    pruning) — to choose strong moves.
-5. **Reinforcement-learning player.** A policy trained via RL (self-play). Likely
+6. **Reinforcement-learning player.** A policy trained via RL (self-play). Likely
    needs supporting tooling (training loop, model persistence) beyond the game
    engine itself.
 
-Others may be added as the project evolves. Candidate ideas: a **random player**
-(trivial baseline and useful in tests / as an RL sparring partner); a
-**heuristic player** (rule-based: win if you can, block an opponent's near-win,
-else a positional choice) as a cheap, explainable mid-strength opponent and a
-benchmark for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
+Others may be added as the project evolves. Candidate ideas: a **heuristic
+player** (rule-based: win if you can, block an opponent's near-win, else a
+positional choice) as a cheap, explainable mid-strength opponent and a benchmark
+for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
 **remote/network player** for play across machines.
 
 ### Tournaments
@@ -457,9 +496,12 @@ A **text CLI**:
   emoji: 🐭 (mouse) and 🐍 (snake).
 - Reports whose turn it is, the move played, and the outcome
   (`Mouse wins`, `Snake wins`, or `Cat's game`).
-- For v1, both players are scripted bots, so the CLI mainly **renders** a game
-  rather than reading interactive input. Interactive human input is a future
-  addition.
+- **Watches a game turn by turn.** The CLI attaches a `GameObserver` (see §10,
+  "Watching a game") that re-renders the board after every move, pausing for the
+  user to advance when stdin is interactive and playing straight through when it
+  is not. The bundled demo plays two random players against each other.
+- The CLI mainly **renders** a game rather than reading interactive move input;
+  interactive human input is a future addition.
 
 ## 12. Architecture (proposed)
 
@@ -467,11 +509,14 @@ Rough module layout (subject to change once we start coding):
 
 - `board` / `core` — board representation, move validation, applying moves, and
   win/draw detection.
-- `game` — the loop that runs a single game, alternating the two players. Matches
-  (repeated games) and tournaments will live in their own modules alongside it;
-  together these form the "engine" that drives play.
-- `players` — the player interface and the scripted bot.
-- `cli` — rendering the board and reporting outcomes.
+- `game` — the loop that runs a single game, alternating the two players, plus
+  the optional `GameObserver` hook for watching/logging. Matches (repeated games)
+  and tournaments will live in their own modules alongside it; together these
+  form the "engine" that drives play.
+- `players` — the player interface and its implementations (scripted and random
+  bots so far).
+- `cli` — rendering the board, reporting outcomes, and watching a game turn by
+  turn via a `GameObserver`.
 
 Data types to nail down when we build: cell coordinate, piece/player enum,
 board, move (a pair of cells), and game result.

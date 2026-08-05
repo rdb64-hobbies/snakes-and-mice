@@ -9,20 +9,21 @@ from __future__ import annotations
 
 from .board import Board
 from .core import BOARD_SIZE, Cell, Move, MoveChoice, Side, TurnOutcome
-from .game import play_game
 from .faults import (
     IllegalMove,
     MoveUnavailable,
     PlayerFaultReason,
     SnakesAndMiceError,
 )
-from .players import Player, ScriptedPlayer
+from .game import GameObserver, play_game
+from .players import Player, RandomPlayer, ScriptedPlayer
 from .result import GameResult, PlayerFaultDetail, Termination
 
 __all__ = [
     "BOARD_SIZE",
     "Board",
     "Cell",
+    "GameObserver",
     "GameResult",
     "IllegalMove",
     "Move",
@@ -31,6 +32,7 @@ __all__ = [
     "Player",
     "PlayerFaultDetail",
     "PlayerFaultReason",
+    "RandomPlayer",
     "ScriptedPlayer",
     "Side",
     "SnakesAndMiceError",

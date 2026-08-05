@@ -60,6 +60,15 @@ class Board:
         """Whether every cell is occupied."""
         return len(self._cells) == BOARD_SIZE * BOARD_SIZE
 
+    def empty_cells(self) -> list[Cell]:
+        """Every unoccupied cell, in row-major order (rank ``A`` first)."""
+        return [
+            cell
+            for r in range(BOARD_SIZE)
+            for c in range(BOARD_SIZE)
+            if self.is_empty(cell := Cell(r, c))
+        ]
+
     def winner(self) -> Side | None:
         """The side occupying all cells of some line, or ``None``."""
         for line in LINES:
