@@ -1,7 +1,7 @@
 # Snakes and Mice — Specification
 
-> Status: **draft**, v0.1. This document defines the game and the v1 scope. We
-> agree on this before writing code.
+> Status: **living draft**. This document defines the game and the roadmap
+> through **1.0** (see §14 for the versioning scheme).
 
 ## 1. Overview
 
@@ -448,21 +448,21 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 ### Player types
 
 The engine and interface must not need changes to add a new player type; each is
-just another implementation of the player interface. Planned types, roughly in
-implementation order:
+just another implementation of the player interface. The types, in
+implementation order (the first three are implemented — see the milestones in §14):
 
-1. **Scripted player** *(first to implement)*. Initialized with a predetermined
+1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
    deterministic games for testing the rules and engine (win detection, cat's
    game, illegal-move handling, etc.).
-2. **Random player.** Plays uniformly at random among legal moves: each turn it
+2. **Random player** *(implemented — 0.2)*. Plays uniformly at random among legal moves: each turn it
    places two pieces on two randomly chosen empty cells (or a single piece on the
    last empty cell, which necessarily ends the game). It tracks its own board
    through `observe_move` and makes no outcome claim. A trivial baseline, a
    sparring partner for the stronger players, and a convenient driver for
    non-deterministic tests. Its randomness is drawn from an injectable
    `random.Random`, so a seeded instance produces fully reproducible games.
-3. **Human player.** Reads a move interactively (input format `C3 D4`, see §15).
+3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4`, see §15).
    So a human is never knocked out by a slip, it **re-prompts** on any locally
    detectable mistake — an unparseable label, the wrong number of cells, an
    off-board or repeated cell, a target already occupied, or a lone piece that
@@ -471,14 +471,14 @@ implementation order:
    outcome claim. End-of-input concedes the turn (a `PLAYER_FAULT`). Its input and
    output are injectable so it can be driven deterministically in tests. The
    engine stays the source of truth; the local checks only spare avoidable faults.
-4. **LLM player.** Chooses moves by querying a large language model, with support
+4. **LLM player** *(planned — 1.0)*. Chooses moves by querying a large language model, with support
    for a **range of LLM providers and models**. This player warrants its own
    detailed sub-spec (provider abstraction, prompting, parsing/validating the
    model's move, retry/fallback on invalid output, cost/latency, etc.), to be
    written later.
-5. **Algorithmic player.** Searches the game tree — e.g. alpha–beta (minimax with
+5. **Algorithmic player** *(planned)*. Searches the game tree — e.g. alpha–beta (minimax with
    pruning) — to choose strong moves.
-6. **Reinforcement-learning player.** A policy trained via RL (self-play). Likely
+6. **Reinforcement-learning player** *(planned)*. A policy trained via RL (self-play). Likely
    needs supporting tooling (training loop, model persistence) beyond the game
    engine itself.
 
@@ -494,9 +494,9 @@ The project **will support a tournament structure** that pits player types
 against each other over many games. This is a committed goal, but its details
 (match/series format, scheduling of pairings, scoring/standings, handling of the
 Snake/Mouse start asymmetry, reporting) warrant their own sub-spec, to be written
-later. Not part of v1 (see §14).
+later. This is a **1.0** goal, not part of the current 0.x line (see §14).
 
-## 11. Interface (v1)
+## 11. Interface
 
 A **text CLI**:
 
@@ -544,15 +544,35 @@ board, move (a pair of cells), and game result.
   checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
   strict configuration.
 
-## 14. Out of scope for v1
+## 14. Versioning & scope
 
-The player types beyond the scripted player (§10) are planned but **not** part of
-v1 — the LLM, algorithmic, RL, and any other players come later, each without
-requiring engine changes. (The random and human players have since been added.)
-Also out of scope for v1:
+The project follows [Semantic Versioning](https://semver.org/); the version in
+`pyproject.toml` tracks capability milestones. The purpose of the project — an
+LLM-reasoning benchmark — is what defines "useful," so the version reflects
+progress toward that, not incidental churn.
+
+- **0.x — pre-release.** The engine is playable and watchable, but the project
+  does not yet do the job it exists for. Each minor bump marks a shipped
+  capability:
+  - **0.1** — the game engine and rules, the scripted player, and the text CLI.
+  - **0.2** — the random player and turn-by-turn game observation (`GameObserver`).
+  - **0.3** — the interactive human player. *(current)*
+- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§10)
+  and the **tournament structure** (§10) land together: only then can the project
+  do what it exists to do — pit LLMs against each other, and against strong
+  non-LLM players, over many games and score them. Other 0.x milestones (e.g. a
+  heuristic or MCTS player, §10) may ship first, but **1.0 is defined by that
+  LLM-player + tournament pair**, regardless of what else arrives before it.
+- **After 1.0**, standard SemVer applies: incompatible changes to the player API
+  or CLI bump the major, backward-compatible capabilities bump the minor, and
+  fixes bump the patch.
+
+Each of these players — LLM, algorithmic, RL — arrives without requiring engine
+changes, as the `Player` abstraction (§10) is designed to allow.
+
+Out of scope until at least 1.0, and possibly beyond:
 
 - Game-balance analysis (whether Snake or Mouse is favored given the `B3` start).
-- The arena / tournament runner (§10).
 - Any GUI/TUI.
 - Network/remote play.
 
