@@ -687,6 +687,36 @@ made at each model's best. "Consistent" here means *each model at its own top
 setting*, not a byte-identical configuration across providers. Per-player effort
 levels and provider-specific setting overrides are deliberately deferred.
 
+### Message logging (debugging)
+
+Because the benchmark turns on *how a model reasons*, it helps to be able to read
+the exact conversation a player had with its model. A debugging option captures
+that: with the CLI flag **`--log-llm [DIR]`** (off by default; `DIR` defaults to a
+git-ignored `llm-logs/`), each LLM player writes the **full raw message thread** —
+everything sent to and received from the model — as JSON under `DIR`.
+
+- **The complete thread, verbatim.** The dump is Pydantic AI's own serialized
+  message history (`ModelMessagesTypeAdapter` over the agent's `all_messages()`),
+  so it is faithful and replayable: the opening rules preamble, each game's "you
+  are {side}" and opponent-move messages, the flushed user turns, and the model's
+  structured responses (`move_rationale`, `cells`, `claimed_outcome`) — plus the
+  deferred `end_game` feedback — all in order, with whatever metadata the library
+  records (model settings, usage, timestamps).
+- **One file per LLM player instance.** A player's thread spans the whole match
+  (see "The message thread" above), so its file holds that side's entire match
+  conversation across all games, keyed by player name and side (e.g.
+  `opus-mouse.json`). Only LLM players have a thread; the flag is a no-op for
+  `random` / `human` players.
+- **Rewritten after every model call.** The file is overwritten with the complete
+  thread-so-far on each `choose_move`, so an interrupted or crashed run still
+  leaves the whole conversation up to the point of failure — exactly when a
+  transcript is most wanted.
+- **Local, untracked.** `DIR` holds debugging artifacts, not benchmark output; it
+  is git-ignored and never committed.
+
+This is purely an observation aid: it never changes what is sent to the model, and
+never affects how moves or faults are scored.
+
 ### Deferred for now
 
 To keep the first LLM player simple, and beyond the game-playing core above:
@@ -793,6 +823,9 @@ A **text CLI**:
   plays a single game as Mouse, and `snakes-and-mice --mouse opus --snake gpt5
   --games 20 --watch game` runs a 20-game match between two LLMs, reporting per
   game.
+- **Logs LLM conversations (debugging).** `--log-llm [DIR]` (off by default) dumps
+  each LLM player's full raw message thread as JSON, for inspecting how a model
+  reasoned (§11, "Message logging"). A no-op for non-LLM players.
 
 ## 14. Architecture (proposed)
 
