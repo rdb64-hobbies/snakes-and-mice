@@ -15,21 +15,25 @@ from .faults import (
     PlayerFaultReason,
     SnakesAndMiceError,
 )
-from .game import GameObserver, play_game
+from .game import play_game
+from .match import play_match
+from .observer import ObservationLevel, Observer
 from .players import HumanPlayer, Player, RandomPlayer, ScriptedPlayer
-from .result import GameResult, PlayerFaultDetail, Termination
+from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
 
 __all__ = [
     "BOARD_SIZE",
     "Board",
     "Cell",
-    "GameObserver",
     "GameResult",
     "HumanPlayer",
     "IllegalMove",
+    "MatchResult",
     "Move",
     "MoveChoice",
     "MoveUnavailable",
+    "ObservationLevel",
+    "Observer",
     "Player",
     "PlayerFaultDetail",
     "PlayerFaultReason",
@@ -40,4 +44,5 @@ __all__ = [
     "Termination",
     "TurnOutcome",
     "play_game",
+    "play_match",
 ]

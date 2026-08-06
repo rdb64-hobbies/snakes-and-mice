@@ -6,9 +6,10 @@ import argparse
 
 from .board import Board
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
-from .game import GameObserver, play_game
+from .match import play_match
+from .observer import ObservationLevel, Observer
 from .players import HumanPlayer, Player, RandomPlayer
-from .result import GameResult, PlayerFaultDetail, Termination
+from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
 
 # The piece glyphs are emoji, which occupy TWO display columns in a terminal.
 # Every rendered cell is therefore normalized to a two-column token so the board
@@ -64,35 +65,71 @@ def describe_result(result: GameResult, players: dict[Side, str]) -> str:
     return detail
 
 
-class ConsoleObserver(GameObserver):
-    """Renders a game to stdout as it is played.
+def describe_match_result(result: MatchResult) -> str:
+    """A multi-line human-readable summary of a match's tallies."""
+    names: dict[Side, str] = result.names
+    lines: list[str] = [
+        f"Match complete — {result.num_games} "
+        f"{'game' if result.num_games == 1 else 'games'}",
+        f"  🐭 {names[Side.MOUSE]} (mouse): {result.mouse_wins} "
+        f"{'win' if result.mouse_wins == 1 else 'wins'}",
+        f"  🐍 {names[Side.SNAKE]} (snake): {result.snake_wins} "
+        f"{'win' if result.snake_wins == 1 else 'wins'}",
+        f"  Cat's games: {result.cats_games}",
+    ]
+    if result.faults:
+        lines.append(
+            f"  Faults: {result.mouse_faults} mouse, {result.snake_faults} snake"
+        )
+    return "\n".join(lines)
 
-    When ``pause`` is set, it waits for the user to press Enter between turns so
-    the game can be watched move by move; a non-interactive stdin (piped input,
-    CI) simply plays straight through.
+
+class ConsoleObserver(Observer):
+    """Renders a match to stdout, showing as much as its level asks for.
+
+    The engine fires every hook; this observer gates its own output against the
+    :class:`~snakes_and_mice.observer.ObservationLevel` it was built with —
+    ``move`` shows every turn, ``game`` just each game's board and result, and
+    ``match`` only the opening banner and the closing tally. Per-game
+    bookkeeping (the game counter, the turn counter) is kept up to date at every
+    level, so it is correct whenever a finer level does render. It never pauses:
+    with a human player, that player's own input paces the game; otherwise play
+    runs straight through.
     """
 
-    def __init__(self, pause: bool = True) -> None:
-        self._pause: bool = pause
+    def __init__(self, level: ObservationLevel = ObservationLevel.MOVE) -> None:
+        super().__init__(level)
         self._names: dict[Side, str] = {}
+        self._num_games: int = 1
+        self._game: int = 0
         self._turn: int = 0
 
-    def _wait(self, prompt: str) -> None:
-        if not self._pause:
-            return
-        try:
-            input(prompt)
-        except EOFError:  # non-interactive stdin — stop pausing, play on
-            self._pause = False
+    def on_match_start(self, names: dict[Side, str], num_games: int) -> None:
+        self._names = names
+        self._num_games = num_games
+        print("Snakes and Mice\n")
+        print(f"🐭 Mouse: {names[Side.MOUSE]}    🐍 Snake: {names[Side.SNAKE]}")
+        if num_games > 1:
+            print(f"Match: {num_games} games")
 
     def on_game_start(self, names: dict[Side, str], board: Board) -> None:
         self._names = names
-        print("Snakes and Mice\n")
-        print(f"🐭 Mouse: {names[Side.MOUSE]}    🐍 Snake: {names[Side.SNAKE]}\n")
-        print(render_board(board))
-        self._wait("\nPress Enter to start… ")
+        self._game += 1
+        self._turn = 0
+        if self.level < ObservationLevel.GAME:
+            return
+        if self._num_games > 1:
+            print(f"\n=== Game {self._game} of {self._num_games} ===")
+        # The starting board is only worth showing when the moves that follow
+        # will update it — i.e. at MOVE level. At GAME level it would be a lone
+        # seeded board no one watches change, so skip it.
+        if self.level >= ObservationLevel.MOVE:
+            print()
+            print(render_board(board))
 
     def on_move_start(self, side: Side, board: Board) -> None:
+        if self.level < ObservationLevel.MOVE:
+            return
         self._turn += 1
         # Printed before the move is produced, so a slow player (e.g. an LLM)
         # visibly "thinks" here before on_move_end reports what it played.
@@ -101,13 +138,19 @@ class ConsoleObserver(GameObserver):
     def on_move_end(
         self, side: Side, move: Move, board: Board, outcome: TurnOutcome
     ) -> None:
+        if self.level < ObservationLevel.MOVE:
+            return
         print(f"  plays {move}:\n")
         print(render_board(board))
-        if outcome is TurnOutcome.IN_PLAY:
-            self._wait("\nPress Enter for the next turn… ")
 
     def on_game_end(self, result: GameResult) -> None:
+        if self.level < ObservationLevel.GAME:
+            return
         print(f"\n{describe_result(result, self._names)}")
+
+    def on_match_end(self, result: MatchResult) -> None:
+        if self._num_games > 1:
+            print(f"\n{describe_match_result(result)}")
 
 
 _RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
@@ -120,14 +163,17 @@ def _make_player(kind: str, side: Side) -> Player:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Play a game and render it turn by turn.
+    """Play or watch a match of one or more games.
 
-    By default two random bots play (watch mode, pausing between turns). Pass
-    ``--mouse human`` and/or ``--snake human`` to take a seat; with a human in
-    the game there is no between-turns pause — the human's own input paces it.
+    By default two random bots play a single game at ``move`` detail. Pass
+    ``--games N`` for a longer match and ``--watch match|game|move`` to choose
+    how much is shown. Pass ``--mouse human`` and/or ``--snake human`` to take a
+    seat; a human at the board always forces ``move`` detail (with a note), since
+    a human must see every move to play it.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        prog="snakes-and-mice", description="Play or watch a game of Snakes and Mice."
+        prog="snakes-and-mice",
+        description="Play or watch a match of Snakes and Mice.",
     )
     parser.add_argument(
         "--mouse", choices=["random", "human"], default="random",
@@ -137,9 +183,24 @@ def main(argv: list[str] | None = None) -> None:
         "--snake", choices=["random", "human"], default="random",
         help="who plays Snake (default: random)",
     )
+    parser.add_argument(
+        "--games", type=int, default=1, metavar="N",
+        help="number of games in the match (default: 1)",
+    )
+    parser.add_argument(
+        "--watch", choices=["match", "game", "move"], default="move",
+        help="how much to show: match, game, or every move (default: move)",
+    )
     args: argparse.Namespace = parser.parse_args(argv)
+
+    if args.games < 1:
+        parser.error("--games must be at least 1")
 
     mouse: Player = _make_player(args.mouse, Side.MOUSE)
     snake: Player = _make_player(args.snake, Side.SNAKE)
     has_human: bool = "human" in (args.mouse, args.snake)
-    play_game(mouse, snake, ConsoleObserver(pause=not has_human))
+    level: ObservationLevel = ObservationLevel[args.watch.upper()]
+    if has_human and level < ObservationLevel.MOVE:
+        print("(a human is playing — showing every move)\n")
+        level = ObservationLevel.MOVE
+    play_match(mouse, snake, args.games, ConsoleObserver(level))

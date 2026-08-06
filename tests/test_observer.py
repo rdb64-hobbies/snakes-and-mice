@@ -1,14 +1,13 @@
-"""Tests for the GameObserver hook: the engine drives it in lockstep."""
+"""Tests for the Observer hooks: the engine drives them in lockstep."""
 
 from __future__ import annotations
 
 from snakes_and_mice import (
     Board,
-    Cell,
-    GameObserver,
     GameResult,
     Move,
     MoveChoice,
+    Observer,
     ScriptedPlayer,
     Side,
     Termination,
@@ -17,10 +16,11 @@ from snakes_and_mice import (
 )
 
 
-class _Recorder(GameObserver):
+class _Recorder(Observer):
     """Records every hook call, snapshotting board facts at call time."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.events: list[str] = []
         self.names: dict[Side, str] = {}
         self.start_piece_count: int = -1

@@ -46,3 +46,25 @@ class GameResult:
     termination: Termination
     winner: Side | None = None  # None for both CATS_GAME and PLAYER_FAULT
     fault: PlayerFaultDetail | None = None  # set iff termination == PLAYER_FAULT
+
+
+@dataclass(frozen=True)
+class MatchResult:
+    """The outcome of a match: two fixed players over a sequence of games.
+
+    The tallies partition the games: every game is a mouse win, a snake win, a
+    cat's game, or a fault charged to exactly one side — so
+    ``mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults ==
+    num_games``. Only faulted games keep their full :class:`GameResult` (in
+    :attr:`faults`, with the fault detail); the rest are captured by the counts
+    alone, hence ``mouse_faults + snake_faults == len(faults)``.
+    """
+
+    names: dict[Side, str]  # who played each side, fixed for the whole match
+    num_games: int
+    mouse_wins: int
+    snake_wins: int
+    cats_games: int
+    mouse_faults: int  # games the Mouse-side player faulted
+    snake_faults: int  # games the Snake-side player faulted
+    faults: list[GameResult]  # the faulted games' full results

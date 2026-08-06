@@ -10,59 +10,21 @@ from __future__ import annotations
 from .board import Board
 from .core import Move, MoveChoice, Side, TurnOutcome
 from .faults import IllegalMove, MoveUnavailable, PlayerFaultReason
+from .observer import Observer
 from .players.base import Player
 from .result import GameResult, PlayerFaultDetail, Termination
 
 
-class GameObserver:
-    """A spectator the engine drives alongside the players, so a game can be
-    watched or logged turn by turn.
-
-    Unlike a :class:`~snakes_and_mice.players.Player`, an observer never
-    influences play: it only receives the authoritative board after each event.
-    Every hook defaults to a no-op, so a subclass overrides only what it needs.
-    The ``Board`` handed to a hook is the engine's live board — treat it as
-    read-only.
-    """
-
-    def on_game_start(self, names: dict[Side, str], board: Board) -> None:
-        """The game is about to begin, with the given side→name mapping and the
-        seeded starting board."""
-        return None
-
-    def on_move_start(self, side: Side, board: Board) -> None:
-        """``side`` is about to be asked for its move; ``board`` is the current
-        pre-move state.
-
-        Fires at the start of every turn, before ``choose_move``. This matters
-        when producing a move is slow — e.g. an LLM player querying a model — so
-        a watcher can show that the turn has begun and who is thinking, well
-        before :meth:`on_move_end` reports what they played.
-        """
-        return None
-
-    def on_move_end(
-        self, side: Side, move: Move, board: Board, outcome: TurnOutcome
-    ) -> None:
-        """``side`` just played ``move``, yielding ``outcome``; ``board`` now
-        reflects it. Fires once per accepted move (including the terminal one),
-        and not at all for a turn that ends in a fault."""
-        return None
-
-    def on_game_end(self, result: GameResult) -> None:
-        """The game has ended with ``result``."""
-        return None
-
-
 def play_game(
-    mouse: Player, snake: Player, observer: GameObserver | None = None
+    mouse: Player, snake: Player, observer: Observer | None = None
 ) -> GameResult:
     """Play one game between ``mouse`` and ``snake``; return the result.
 
     ``mouse`` moves first. Every termination — win, cat's game, or fault — is
     reported to both players via ``end_game`` before this returns. An optional
-    :class:`GameObserver` is driven in lockstep so a caller (e.g. the CLI) can
-    watch the game unfold turn by turn.
+    :class:`Observer` is driven in lockstep: the engine fires every hook it has,
+    in order, and leaves it to the observer to decide (from its
+    :class:`~snakes_and_mice.observer.ObservationLevel`) how much to act on.
     """
     board: Board = Board()
     players: dict[Side, Player] = {Side.MOUSE: mouse, Side.SNAKE: snake}
@@ -189,7 +151,7 @@ def _fault(
 def _finish(
     players: dict[Side, Player],
     result: GameResult,
-    observer: GameObserver | None = None,
+    observer: Observer | None = None,
 ) -> GameResult:
     """Notify both players (and any observer) that the game ended, then return
     the result."""

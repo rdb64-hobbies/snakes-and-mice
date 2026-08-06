@@ -9,8 +9,8 @@ import pytest
 from snakes_and_mice import (
     Board,
     Cell,
-    GameObserver,
     Move,
+    Observer,
     RandomPlayer,
     Side,
     Termination,
@@ -19,7 +19,7 @@ from snakes_and_mice import (
 )
 
 
-class _MoveRecorder(GameObserver):
+class _MoveRecorder(Observer):
     """Records the (side, move) of every accepted move."""
 
     def __init__(self) -> None:

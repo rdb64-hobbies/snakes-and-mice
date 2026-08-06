@@ -311,8 +311,8 @@ player that does not care simply no-ops on its own move.
 
 Separately from the players, the engine accepts an optional **observer** — a
 spectator driven in lockstep with the game so a caller can watch or log it turn
-by turn without being a player. `play_game(mouse, snake, observer=None, level=...)`
-calls these game- and move-level hooks, each defaulting to a no-op:
+by turn without being a player. `play_game(mouse, snake, observer=None)` calls
+these game- and move-level hooks, each defaulting to a no-op:
 
 ```python
 class Observer:
@@ -341,8 +341,10 @@ This keeps rendering out of the engine and out of the players: the board is a
 reconstructing it from observed moves.
 
 The same `Observer` also has **match-level** hooks (`on_match_start`,
-`on_match_end`) and an **observation level** that gates how much is reported; both
-are introduced with matches (§12).
+`on_match_end`) and carries an **observation level** — set when the observer is
+constructed — that it uses to gate how much it reports; both are introduced with
+matches (§12). The engine stays level-blind: it always fires every hook, and the
+observer decides what to act on.
 
 ### Game results and termination
 
@@ -714,8 +716,7 @@ LLM player carry feedback from one game into the next (§10, "Feedback across ga
 
 ```python
 def play_match(mouse: Player, snake: Player, num_games: int,
-               observer: Observer | None = None,
-               level: ObservationLevel = ObservationLevel.MOVE) -> MatchResult: ...
+               observer: Observer | None = None) -> MatchResult: ...
 ```
 
 ### What a match reports
@@ -752,22 +753,25 @@ class Observer:                 # ... on_game_start / on_move_start / on_move_en
     def on_match_end(self, result: MatchResult) -> None: ...
 ```
 
-An `ObservationLevel` selects how much is reported, coarse to fine:
+An `ObservationLevel`, **set when the observer is constructed**, selects how much
+that observer reports, coarse to fine:
 
 ```python
-class ObservationLevel(Enum):   # ordered MATCH < GAME < MOVE
+class ObservationLevel(IntEnum):  # ordered MATCH < GAME < MOVE
     MATCH   # only the start and end of the match
     GAME    # the above, plus the start and end of each game
     MOVE    # the above, plus every individual move
 ```
 
-The runners fire only the hooks the level enables: at `MATCH` the games are still
-**played** (so the tallies are computed) but only `on_match_start` / `on_match_end`
-fire; `GAME` adds the game-boundary hooks; `MOVE` adds the move hooks. There is **no
-pausing** between moves or games — the only thing that ever waits for input is a
-human player taking its own turn. Because a human must see the board to play, **if
-either player is human the level is forced to `MOVE`** (a coarser request is
-overridden, with a message).
+The **engine is level-blind**: `play_game` / `play_match` always fire every hook,
+in order, and the observer gates its own output against `self.level` — so "how much
+to watch" is a property of the watcher, not of the run. At `MATCH` an observer acts
+only on `on_match_start` / `on_match_end`; `GAME` adds the game-boundary hooks;
+`MOVE` adds the move hooks. Games are always **played** in full regardless (so the
+tallies are always computed). There is **no pausing** between moves or games — the
+only thing that ever waits for input is a human player taking its own turn. Because
+a human must see the board to play, **if either player is human the CLI builds the
+observer at `MOVE`** (a coarser request is overridden, with a message).
 
 ## 13. Interface
 
@@ -778,7 +782,7 @@ A **text CLI**:
 - Reports whose turn it is, the move played, and the outcome
   (`Mouse wins`, `Snake wins`, or `Cat's game`).
 - **Watches play at a chosen level.** The CLI attaches an `Observer` (§10) whose
-  **observation level** (`--level`, default `move`) sets the detail — `match`,
+  **observation level** (`--watch`, default `move`) sets the detail — `match`,
   `game`, or `move` (§12). There is no artificial pausing; only a human player's
   own input paces the game.
 - **Runs a match.** `--mouse` and `--snake` each name who plays that side —
@@ -787,7 +791,7 @@ A **text CLI**:
   either player is human the level is forced to `move` (with a message), since a
   human must see the board. E.g. `snakes-and-mice --mouse human --snake random`
   plays a single game as Mouse, and `snakes-and-mice --mouse opus --snake gpt5
-  --games 20 --level game` runs a 20-game match between two LLMs, reporting per
+  --games 20 --watch game` runs a 20-game match between two LLMs, reporting per
   game.
 
 ## 14. Architecture (proposed)
@@ -796,8 +800,11 @@ Rough module layout (subject to change once we start coding):
 
 - `board` / `core` — board representation, move validation, applying moves, and
   win/draw detection.
-- `game` — the loop that runs a single game, alternating the two players, plus the
-  optional `Observer` hooks for watching/logging.
+- `game` — the loop that runs a single game, alternating the two players and
+  firing the `Observer` hooks in lockstep.
+- `observer` — the `Observer` spectator interface and the `ObservationLevel` that
+  an observer uses to gate its own output; depends on neither `game` nor `match`,
+  so both can drive it without a cycle.
 - `match` — runs a match: a sequence of games between two fixed players (§12),
   reusing the same instances so LLM feedback carries across games, and producing a
   `MatchResult`. Tournaments will compose matches in their own module later;
@@ -842,7 +849,10 @@ progress toward that, not incidental churn.
   capability:
   - **0.1** — the game engine and rules, the scripted player, and the text CLI.
   - **0.2** — the random player and turn-by-turn game observation.
-  - **0.3** — the interactive human player. *(current)*
+  - **0.3** — the interactive human player.
+  - **0.4** — matches (§12): two fixed players over a sequence of games with
+    tallied results, the generalized `Observer` with `ObservationLevel`, and the
+    `--games` / `--watch` CLI. *(current)*
 - **1.0 — first genuinely useful release.** Reached when the **LLM player** (§11)
   and the **tournament structure** (§10) land together: only then can the project
   do what it exists to do — pit LLMs against each other, and against strong
