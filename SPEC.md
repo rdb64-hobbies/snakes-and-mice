@@ -1,7 +1,7 @@
 # Snakes and Mice — Specification
 
 > Status: **living draft**. This document defines the game and the roadmap
-> through **1.0** (see §14 for the versioning scheme).
+> through **1.0** (see §16 for the versioning scheme).
 
 ## 1. Overview
 
@@ -25,7 +25,7 @@ A model's reasoning skill is judged not only by wins, draws, and losses but also
 by **how often it faults** — a player fault being an illegal move, a failure to
 produce an interpretable move, or a misreading of the game's outcome. Fault
 frequency, broken down by `PlayerFaultReason` (§10), is itself a meaningful
-metric. This is why supporting a range of LLM providers and models (§10) and a
+metric. This is why supporting a range of LLM providers and models (§11) and a
 tournament structure for head-to-head comparison (§10) are central rather than
 incidental features.
 
@@ -311,11 +311,11 @@ player that does not care simply no-ops on its own move.
 
 Separately from the players, the engine accepts an optional **observer** — a
 spectator driven in lockstep with the game so a caller can watch or log it turn
-by turn without being a player. `play_game(mouse, snake, observer=None)` calls
-three hooks, each of which defaults to a no-op:
+by turn without being a player. `play_game(mouse, snake, observer=None, level=...)`
+calls these game- and move-level hooks, each defaulting to a no-op:
 
 ```python
-class GameObserver:
+class Observer:
     def on_game_start(self, names: dict[Side, str], board: Board) -> None: ...
     def on_move_start(self, side: Side, board: Board) -> None: ...
     def on_move_end(self, side: Side, move: Move, board: Board,
@@ -339,6 +339,10 @@ detail arrives with `on_game_end`.
 This keeps rendering out of the engine and out of the players: the board is a
 **fact** the engine already owns, so a watcher reads it directly rather than
 reconstructing it from observed moves.
+
+The same `Observer` also has **match-level** hooks (`on_match_start`,
+`on_match_end`) and an **observation level** that gates how much is reported; both
+are introduced with matches (§12).
 
 ### Game results and termination
 
@@ -449,7 +453,7 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 
 The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
-implementation order (the first three are implemented — see the milestones in §14):
+implementation order (the first three are implemented — see the milestones in §16):
 
 1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
@@ -462,7 +466,7 @@ implementation order (the first three are implemented — see the milestones in 
    sparring partner for the stronger players, and a convenient driver for
    non-deterministic tests. Its randomness is drawn from an injectable
    `random.Random`, so a seeded instance produces fully reproducible games.
-3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4`, see §15).
+3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4`, see §17).
    So a human is never knocked out by a slip, it **re-prompts** on any locally
    detectable mistake — an unparseable label, the wrong number of cells, an
    off-board or repeated cell, a target already occupied, or a lone piece that
@@ -471,11 +475,10 @@ implementation order (the first three are implemented — see the milestones in 
    outcome claim. End-of-input concedes the turn (a `PLAYER_FAULT`). Its input and
    output are injectable so it can be driven deterministically in tests. The
    engine stays the source of truth; the local checks only spare avoidable faults.
-4. **LLM player** *(planned — 1.0)*. Chooses moves by querying a large language model, with support
-   for a **range of LLM providers and models**. This player warrants its own
-   detailed sub-spec (provider abstraction, prompting, parsing/validating the
-   model's move, retry/fallback on invalid output, cost/latency, etc.), to be
-   written later.
+4. **LLM player** *(planned — 1.0)*. Chooses moves by querying a large language
+   model via Pydantic AI, with support for a **range of LLM providers and models**
+   (Anthropic, OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom
+   endpoints). Specified in full in §11.
 5. **Algorithmic player** *(planned)*. Searches the game tree — e.g. alpha–beta (minimax with
    pruning) — to choose strong moves.
 6. **Reinforcement-learning player** *(planned)*. A policy trained via RL (self-play). Likely
@@ -490,13 +493,283 @@ for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
 
 ### Tournaments
 
-The project **will support a tournament structure** that pits player types
-against each other over many games. This is a committed goal, but its details
-(match/series format, scheduling of pairings, scoring/standings, handling of the
-Snake/Mouse start asymmetry, reporting) warrant their own sub-spec, to be written
-later. This is a **1.0** goal, not part of the current 0.x line (see §14).
+The project **will support a tournament structure** that pits player types against
+each other over many games, composed from **matches** (§12) as its building block.
+This is a committed goal, but its details (pairing schedule, scoring/standings,
+handling of the Snake/Mouse start asymmetry, reporting) warrant their own sub-spec,
+to be written later. This is a **1.0** goal, not part of the current 0.x line (see
+§16).
 
-## 11. Interface
+## 11. The LLM player
+
+The **LLM player** chooses its moves by querying a large language model. It is the
+player type this project exists to compare: pitting models against one another (and
+against strong non-LLM players) over many games is the benchmark. Because whether a
+model can *reason* about the game — track the board, find lines, recognize a win or a
+dead position, avoid illegal moves — is exactly what we measure, the LLM player is
+given as little help as possible: it sees only the opponent's moves and must
+maintain everything else itself.
+
+### Interaction: Pydantic AI
+
+The player wraps a single [Pydantic AI](https://ai.pydantic.dev/) `Agent`, bound to
+one model (one model per player instance — see "Model selection" below). Two library
+features carry the design:
+
+- **Structured output.** The agent is configured to return a typed object rather
+  than free text, so the move and the player's self-assessment arrive already parsed
+  (see "Structured output" below).
+- **A single running message thread.** The player keeps one conversation that
+  **spans every game it plays** — not one per game. The model thus accumulates
+  context across games (including how earlier games ended), which is what lets it
+  learn from a mistake with no change to the `Player` interface (§10, "Feedback
+  across games"). The thread is **in-memory for the life of the player instance**; it
+  is not persisted across processes.
+
+### Structured output
+
+Each move request returns an object with three fields:
+
+```python
+class LLMMove(BaseModel):
+    move_rationale: str            # a SHORT justification; logged, never validated
+    cells: list[str]               # one or two cell labels, e.g. ["C3", "D4"]
+    claimed_outcome: TurnOutcome   # required self-assessment: in_play | win | cats_game
+```
+
+- **`cells`** are turned into a `Move` via `Move.from_labels(*cells)`. If that cannot
+  form a well-formed move — an unparseable label, an off-board or duplicated cell, or
+  the wrong number of cells — the player catches the `ValueError` / `IllegalMove` and
+  raises `MoveUnavailable` with the matching reason (§10, "Game results and
+  termination"), ending the game as a `PLAYER_FAULT`. Cells that are well-formed but
+  *illegal against the current board* (already occupied, or a lone piece that does
+  not end the game) are caught by the engine at apply-time — the same fault, detected
+  one layer down.
+- **`claimed_outcome` is required** of the LLM (unlike the optional
+  `MoveChoice.claimed_outcome` mechanical players may omit): the model must state,
+  every turn, whether it believes the move wins, draws, or leaves the game in play.
+  Recognizing the outcome is part of the reasoning test, so a wrong claim is a
+  `WRONG_OUTCOME_CLAIM` fault (§10). The parsed move and this claim become the
+  `MoveChoice` the player returns.
+- **`move_rationale`** is a brief, human-readable justification — a *summary* of why
+  the model chose its move, not its full chain of thought. It is **log-only**: never
+  validated, never acted on, kept for observation and later analysis. It is placed
+  first in the schema so the model articulates a reason before committing to a move.
+
+### The message thread
+
+No network call is made except when a move is actually needed: `start_game` and
+`end_game` (and the one-time rules preamble) only **enqueue** messages, flushed as
+the next user turn on the following `choose_move`.
+
+- **Opening message (once, lazily on the first `choose_move`).** Explains the rules —
+  board, coordinates, the snake seeded at `B3`, two pieces per turn, the winning
+  lines, cat's game, what counts as illegal — and the response protocol (return
+  exactly the structured fields above; you see only your opponent's moves and must
+  track the board yourself).
+- **`start_game(side)`** enqueues a "you are playing {side} this game" message. Per
+  §10 it also prepends any stored feedback from a game the player faulted.
+- **`observe_move(side, move)`** — for the **opponent's** move, enqueues "opponent
+  played {move}"; for the player's **own** move it is a no-op (that move is already
+  present as the model's own prior structured response).
+- **`choose_move()`** flushes the queued messages as the user turn, runs the agent
+  over the accumulated history, appends the response, and returns the `MoveChoice`.
+- **`end_game(result)`** composes a message describing how the game ended and
+  enqueues it — deferred, sent only if there is a next game. It reports the result
+  from the structured `GameResult` / `PlayerFaultDetail`, and in particular:
+  - the **opponent's game-ending move(s)**, when the opponent won, drew, or faulted
+    on their own turn — in that case the player never got a `choose_move` to be told
+    that move, so the thread would otherwise be missing it;
+  - if **the player itself faulted**, what it did wrong and how to avoid repeating it,
+    composed from the fault detail (§10, "Whoever reports, reports only the facts").
+
+### No retries
+
+An illegal or unusable move **ends the game** — no retries, no re-prompting within a
+game (contrast the human player, §10, which re-prompts a person). The consequence is
+delivered to the model as feedback in the *next* game's opening messages, not
+mid-game. This makes "does the model play legal, well-assessed moves" a scored
+property of the benchmark rather than something the harness papers over.
+
+(Transient *API* failures — network errors, rate limits — are a separate, operational
+concern, not a player fault; the player may lean on Pydantic AI's own request
+retries. Handling an ultimately-unrecoverable API failure gracefully is left to the
+implementation.)
+
+### Model selection
+
+A player is specified by a **provider** and a **model name**, one model per player
+instance. Providers supported to start:
+
+| Provider | Kind | Key (env var) |
+| --- | --- | --- |
+| `anthropic` | built-in | `ANTHROPIC_API_KEY` |
+| `openai` | built-in | `OPENAI_API_KEY` |
+| `gemini` | built-in (Google Gemini API, key-based — not Vertex) | `GEMINI_API_KEY` |
+| `openrouter` | built-in | `OPENROUTER_API_KEY` |
+| *(custom name)* | OpenAI-compatible endpoint (e.g. ollama, vLLM) | declared per provider |
+
+All four built-ins — **including OpenRouter** — are supported directly by Pydantic
+AI, so none needs extra endpoint configuration; we resolve `(provider, model)` to the
+appropriate Pydantic AI model. Custom providers are OpenAI-compatible endpoints
+reached at a configured base URL.
+
+Three sources of configuration, parsed **outside** the player (§14, Architecture):
+
+- **`players.yaml`** — the roster of available players. Each entry is a free-form
+  **name** (its identity in matches and standings, independent of the model — in
+  common use it will just echo the model), a provider, and a model name:
+
+  ```yaml
+  players:
+    - name: opus
+      provider: anthropic
+      model: claude-opus-4-8
+    - name: gpt5
+      provider: openai
+      model: gpt-5
+    - name: gemini-pro
+      provider: gemini
+      model: gemini-3-pro
+    - name: llama-local
+      provider: my-ollama       # a custom provider, defined in providers.yaml
+      model: llama3.3
+  ```
+
+- **`providers.yaml`** — **only** for custom OpenAI-compatible endpoints; built-in
+  providers are never listed. Each entry maps a provider name to a base URL and,
+  optionally, the environment variable holding its key (a local ollama may need
+  none):
+
+  ```yaml
+  providers:
+    - name: my-ollama
+      base_url: http://localhost:11434/v1
+      # no api_key_env — local endpoint needs no key
+    - name: my-vllm
+      base_url: http://gpu-box:8000/v1
+      api_key_env: VLLM_API_KEY
+  ```
+
+- **`.env`** — API keys, kept out of the YAML and out of version control, read from
+  the environment:
+
+  ```
+  ANTHROPIC_API_KEY=...
+  OPENAI_API_KEY=...
+  GEMINI_API_KEY=...
+  OPENROUTER_API_KEY=...
+  ```
+
+**None of these three files is tracked in git** — they hold local roster choices and
+secrets. The repository instead ships tracked templates — `players.example.yaml`,
+`providers.example.yaml`, and `.env.example` — that document the format and are
+copied and edited into the real (git-ignored) files.
+
+A **config loader** reads these three sources and produces resolved, typed model
+specifications, from which `LLMPlayer` instances are constructed. The player itself
+never touches YAML.
+
+### Thinking / effort level
+
+The one non-default setting is the model's **thinking / reasoning effort**. Pydantic
+AI exposes a **unified** effort control (`ModelSettings(thinking=...)` / the
+`Thinking(effort=...)` capability) with levels `minimal | low | medium | high |
+xhigh`; it translates each to the provider's native mechanism (Anthropic's thinking
+budget, OpenAI's reasoning effort, Gemini's thinking budget, …) and maps an
+unsupported level to the nearest available one.
+
+For now every LLM player uses the **same** level — a single global default, set to
+**`xhigh`** (highest) — so each model reasons at full strength and comparisons are
+made at each model's best. "Consistent" here means *each model at its own top
+setting*, not a byte-identical configuration across providers. Per-player effort
+levels and provider-specific setting overrides are deliberately deferred.
+
+### Deferred for now
+
+To keep the first LLM player simple, and beyond the game-playing core above:
+usage / cost / latency tracking; per-player or per-provider setting overrides;
+persistence of the message thread across processes; and managing a thread that
+outgrows the model's context window over a long match.
+
+## 12. Matches
+
+A **match** is two fixed players playing a sequence of games. It is the unit that
+makes inter-player — especially inter-LLM — comparison meaningful, and because the
+two `Player` instances **persist across all the games**, it is also what lets the
+LLM player carry feedback from one game into the next (§10, "Feedback across games";
+§11). Matches are the building block of the eventual tournament structure (§10,
+"Tournaments"), which is deferred; matches themselves are part of the road to 1.0.
+
+### Definition
+
+- Two players and a game count `N ≥ 1`.
+- **Sides are fixed for the whole match:** one player is Mouse in every game, the
+  other Snake in every game. To compare two players with each taking both sides, run
+  **two** matches with the seats swapped.
+- The **same two instances** are reused across all `N` games — `start_game(side)` /
+  `end_game(result)` are called once per game with each player's fixed side, so a
+  player's cross-game state (e.g. the LLM's running thread) accumulates over the
+  match.
+
+```python
+def play_match(mouse: Player, snake: Player, num_games: int,
+               observer: Observer | None = None,
+               level: ObservationLevel = ObservationLevel.MOVE) -> MatchResult: ...
+```
+
+### What a match reports
+
+```python
+@dataclass(frozen=True)
+class MatchResult:
+    names: dict[Side, str]     # who played each side (fixed for the match)
+    num_games: int
+    mouse_wins: int
+    snake_wins: int
+    cats_games: int
+    mouse_faults: int          # games the Mouse-side player faulted
+    snake_faults: int          # games the Snake-side player faulted
+    faults: list[GameResult]   # the faulted games' full results (with PlayerFaultDetail)
+```
+
+The tallies summarize the match; full per-game `GameResult`s are kept **only for
+games that faulted** — the interesting failures, where a player made an illegal move
+or misread an outcome — each carrying its `PlayerFaultDetail`. By construction
+`mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults == num_games`,
+and `mouse_faults + snake_faults == len(faults)`. Richer scoring and standings belong
+to tournaments and are deferred.
+
+### Observation levels
+
+Observation generalizes from a single game to the whole match. The `Observer` (§10)
+gains two match-level hooks alongside its game/move hooks:
+
+```python
+class Observer:                 # ... on_game_start / on_move_start / on_move_end /
+                                #     on_game_end from §10 ...
+    def on_match_start(self, names: dict[Side, str], num_games: int) -> None: ...
+    def on_match_end(self, result: MatchResult) -> None: ...
+```
+
+An `ObservationLevel` selects how much is reported, coarse to fine:
+
+```python
+class ObservationLevel(Enum):   # ordered MATCH < GAME < MOVE
+    MATCH   # only the start and end of the match
+    GAME    # the above, plus the start and end of each game
+    MOVE    # the above, plus every individual move
+```
+
+The runners fire only the hooks the level enables: at `MATCH` the games are still
+**played** (so the tallies are computed) but only `on_match_start` / `on_match_end`
+fire; `GAME` adds the game-boundary hooks; `MOVE` adds the move hooks. There is **no
+pausing** between moves or games — the only thing that ever waits for input is a
+human player taking its own turn. Because a human must see the board to play, **if
+either player is human the level is forced to `MOVE`** (a coarser request is
+overridden, with a message).
+
+## 13. Interface
 
 A **text CLI**:
 
@@ -504,39 +777,52 @@ A **text CLI**:
   emoji: 🐭 (mouse) and 🐍 (snake).
 - Reports whose turn it is, the move played, and the outcome
   (`Mouse wins`, `Snake wins`, or `Cat's game`).
-- **Watches a game turn by turn.** The CLI attaches a `GameObserver` (see §10,
-  "Watching a game") that re-renders the board after every move, pausing for the
-  user to advance when stdin is interactive and playing straight through when it
-  is not. The bundled demo plays two random players against each other.
-- **Chooses who plays each side.** `--mouse` and `--snake` each take `random`
-  (default) or `human`; e.g. `snakes-and-mice --mouse human` lets you play Mouse
-  against a random Snake. With a human in the game the between-turns pause is
-  dropped, since the human's own move input paces the game.
+- **Watches play at a chosen level.** The CLI attaches an `Observer` (§10) whose
+  **observation level** (`--level`, default `move`) sets the detail — `match`,
+  `game`, or `move` (§12). There is no artificial pausing; only a human player's
+  own input paces the game.
+- **Runs a match.** `--mouse` and `--snake` each name who plays that side —
+  `random`, `human`, or an **LLM roster name** from `players.yaml` (§11); `--games
+  N` (default 1) sets the match length, with sides fixed for the match (§12). If
+  either player is human the level is forced to `move` (with a message), since a
+  human must see the board. E.g. `snakes-and-mice --mouse human --snake random`
+  plays a single game as Mouse, and `snakes-and-mice --mouse opus --snake gpt5
+  --games 20 --level game` runs a 20-game match between two LLMs, reporting per
+  game.
 
-## 12. Architecture (proposed)
+## 14. Architecture (proposed)
 
 Rough module layout (subject to change once we start coding):
 
 - `board` / `core` — board representation, move validation, applying moves, and
   win/draw detection.
-- `game` — the loop that runs a single game, alternating the two players, plus
-  the optional `GameObserver` hook for watching/logging. Matches (repeated games)
-  and tournaments will live in their own modules alongside it; together these
-  form the "engine" that drives play.
+- `game` — the loop that runs a single game, alternating the two players, plus the
+  optional `Observer` hooks for watching/logging.
+- `match` — runs a match: a sequence of games between two fixed players (§12),
+  reusing the same instances so LLM feedback carries across games, and producing a
+  `MatchResult`. Tournaments will compose matches in their own module later;
+  together these form the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
-  and human so far).
-- `cli` — rendering the board, reporting outcomes, and watching a game turn by
-  turn via a `GameObserver`.
+  human, and — per §11 — the LLM player). Loading the LLM roster from
+  `players.yaml` / `providers.yaml` / `.env` lives in a small config module
+  alongside it, keeping YAML parsing out of the player itself.
+- `cli` — rendering the board, reporting outcomes, and watching play via an
+  `Observer` at a selectable observation level (§12).
 
 Data types to nail down when we build: cell coordinate, piece/player enum,
 board, move (a pair of cells), and game result.
 
-## 13. Tech stack & tooling
+## 15. Tech stack & tooling
 
 - **Language:** Python.
 - **Environment & dependencies:** `uv`.
 - **Version control:** `git`.
 - **Tests:** `pytest`, running deterministic games driven by scripted players.
+- **LLM access:** `pydantic-ai` — a uniform interface across providers (Anthropic,
+  OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom endpoints), with
+  structured output and a unified thinking/effort control. Roster and provider
+  config load from YAML (`pyyaml`); API keys come from the environment
+  (`python-dotenv`, a `.env` file). See §11.
 - **Strong typing.** Use static typing wherever possible: complete type hints on
   all public functions, methods, and data structures; `enum`s and (frozen)
   `dataclass`es for domain types (as already used for `Side`, `Move`,
@@ -544,7 +830,7 @@ board, move (a pair of cells), and game result.
   checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
   strict configuration.
 
-## 14. Versioning & scope
+## 16. Versioning & scope
 
 The project follows [Semantic Versioning](https://semver.org/); the version in
 `pyproject.toml` tracks capability milestones. The purpose of the project — an
@@ -555,9 +841,9 @@ progress toward that, not incidental churn.
   does not yet do the job it exists for. Each minor bump marks a shipped
   capability:
   - **0.1** — the game engine and rules, the scripted player, and the text CLI.
-  - **0.2** — the random player and turn-by-turn game observation (`GameObserver`).
+  - **0.2** — the random player and turn-by-turn game observation.
   - **0.3** — the interactive human player. *(current)*
-- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§10)
+- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§11)
   and the **tournament structure** (§10) land together: only then can the project
   do what it exists to do — pit LLMs against each other, and against strong
   non-LLM players, over many games and score them. Other 0.x milestones (e.g. a
@@ -576,7 +862,7 @@ Out of scope until at least 1.0, and possibly beyond:
 - Any GUI/TUI.
 - Network/remote play.
 
-## 15. Resolved decisions
+## 17. Resolved decisions
 
 - **Row orientation:** `A` is the top row, `E` is the bottom.
 - **Illegal-move handling:** the engine raises an error (see §9).

@@ -24,9 +24,15 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Environment variables / secrets (e.g. LLM provider API keys)
+# Environment variables / secrets (e.g. LLM provider API keys); the tracked
+# template is .env.example
 .env
 .env.*
+!.env.example
+
+# Local LLM roster / provider config (tracked templates are *.example.yaml)
+players.yaml
+providers.yaml
 
 # OS / editor cruft
 .DS_Store
