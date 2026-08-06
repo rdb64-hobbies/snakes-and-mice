@@ -463,6 +463,14 @@ implementation order:
    non-deterministic tests. Its randomness is drawn from an injectable
    `random.Random`, so a seeded instance produces fully reproducible games.
 3. **Human player.** Reads a move interactively (input format `C3 D4`, see §15).
+   So a human is never knocked out by a slip, it **re-prompts** on any locally
+   detectable mistake — an unparseable label, the wrong number of cells, an
+   off-board or repeated cell, a target already occupied, or a lone piece that
+   would not end the game — only returning a move once it looks legal. It tracks
+   its own board (to check occupancy and test a single-piece ending) and makes no
+   outcome claim. End-of-input concedes the turn (a `PLAYER_FAULT`). Its input and
+   output are injectable so it can be driven deterministically in tests. The
+   engine stays the source of truth; the local checks only spare avoidable faults.
 4. **LLM player.** Chooses moves by querying a large language model, with support
    for a **range of LLM providers and models**. This player warrants its own
    detailed sub-spec (provider abstraction, prompting, parsing/validating the
@@ -500,8 +508,10 @@ A **text CLI**:
   "Watching a game") that re-renders the board after every move, pausing for the
   user to advance when stdin is interactive and playing straight through when it
   is not. The bundled demo plays two random players against each other.
-- The CLI mainly **renders** a game rather than reading interactive move input;
-  interactive human input is a future addition.
+- **Chooses who plays each side.** `--mouse` and `--snake` each take `random`
+  (default) or `human`; e.g. `snakes-and-mice --mouse human` lets you play Mouse
+  against a random Snake. With a human in the game the between-turns pause is
+  dropped, since the human's own move input paces the game.
 
 ## 12. Architecture (proposed)
 
@@ -513,8 +523,8 @@ Rough module layout (subject to change once we start coding):
   the optional `GameObserver` hook for watching/logging. Matches (repeated games)
   and tournaments will live in their own modules alongside it; together these
   form the "engine" that drives play.
-- `players` — the player interface and its implementations (scripted and random
-  bots so far).
+- `players` — the player interface and its implementations (scripted, random,
+  and human so far).
 - `cli` — rendering the board, reporting outcomes, and watching a game turn by
   turn via a `GameObserver`.
 
@@ -537,8 +547,9 @@ board, move (a pair of cells), and game result.
 ## 14. Out of scope for v1
 
 The player types beyond the scripted player (§10) are planned but **not** part of
-v1 — the human, LLM, algorithmic, RL, and any other players come later, each
-without requiring engine changes. Also out of scope for v1:
+v1 — the LLM, algorithmic, RL, and any other players come later, each without
+requiring engine changes. (The random and human players have since been added.)
+Also out of scope for v1:
 
 - Game-balance analysis (whether Snake or Mouse is favored given the `B3` start).
 - The arena / tournament runner (§10).

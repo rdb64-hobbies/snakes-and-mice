@@ -16,7 +16,7 @@ from .faults import (
     SnakesAndMiceError,
 )
 from .game import GameObserver, play_game
-from .players import Player, RandomPlayer, ScriptedPlayer
+from .players import HumanPlayer, Player, RandomPlayer, ScriptedPlayer
 from .result import GameResult, PlayerFaultDetail, Termination
 
 __all__ = [
@@ -25,6 +25,7 @@ __all__ = [
     "Cell",
     "GameObserver",
     "GameResult",
+    "HumanPlayer",
     "IllegalMove",
     "Move",
     "MoveChoice",

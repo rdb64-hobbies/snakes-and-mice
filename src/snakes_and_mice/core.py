@@ -33,8 +33,8 @@ class Side(Enum):
 class Cell:
     """A board coordinate, validated to be on the board at construction.
 
-    ``row`` and ``col`` are zero-based: row 0 is rank ``A`` (the top), col 0 is
-    file ``1``. The human-facing label (e.g. ``C3``) is available via
+    ``row`` and ``col`` are zero-based: row 0 is the top row (``A``), col 0 is
+    the leftmost column (``1``). The human-facing label (e.g. ``C3``) is available via
     :attr:`label` / :func:`str` and parsed by :meth:`from_label`.
     """
 

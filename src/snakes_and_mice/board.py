@@ -36,6 +36,13 @@ class Board:
     def __init__(self) -> None:
         self._cells: dict[Cell, Side] = {SNAKE_START: Side.SNAKE}
 
+    def copy(self) -> Board:
+        """An independent copy of this board, safe to mutate without affecting
+        the original — useful for a player exploring hypothetical moves."""
+        clone: Board = Board()
+        clone._cells = dict(self._cells)
+        return clone
+
     def occupant(self, cell: Cell) -> Side | None:
         """The side occupying ``cell``, or ``None`` if it is empty."""
         return self._cells.get(cell)
@@ -61,7 +68,7 @@ class Board:
         return len(self._cells) == BOARD_SIZE * BOARD_SIZE
 
     def empty_cells(self) -> list[Cell]:
-        """Every unoccupied cell, in row-major order (rank ``A`` first)."""
+        """Every unoccupied cell, in row-major order (row ``A`` first)."""
         return [
             cell
             for r in range(BOARD_SIZE)

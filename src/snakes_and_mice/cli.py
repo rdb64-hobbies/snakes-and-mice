@@ -1,11 +1,13 @@
-"""Text CLI: board rendering, a result summary, and a watchable demo game."""
+"""Text CLI: board rendering, a result summary, and a playable/watchable game."""
 
 from __future__ import annotations
+
+import argparse
 
 from .board import Board
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
 from .game import GameObserver, play_game
-from .players import RandomPlayer
+from .players import HumanPlayer, Player, RandomPlayer
 from .result import GameResult, PlayerFaultDetail, Termination
 
 # The piece glyphs are emoji, which occupy TWO display columns in a terminal.
@@ -27,18 +29,18 @@ def _cell_token(board: Board, cell: Cell) -> str:
 
 
 def render_board(board: Board) -> str:
-    """Render the board as text, rank ``A`` at the top and file ``1`` at left."""
-    margin: str = " " * _CELL_WIDTH  # sits above the "<rank> " row-label column
+    """Render the board as text, row ``A`` at the top and column ``1`` at left."""
+    margin: str = " " * _CELL_WIDTH  # sits above the "<row> " row-label column
     header: str = margin + " ".join(
         str(c + 1).ljust(_CELL_WIDTH) for c in range(BOARD_SIZE)
     )
     rows: list[str] = [header]
     for r in range(BOARD_SIZE):
-        rank: str = chr(ord("A") + r)
+        row_label: str = chr(ord("A") + r)
         cells: list[str] = [
             _cell_token(board, Cell(r, c)) for c in range(BOARD_SIZE)
         ]
-        rows.append(f"{rank} " + " ".join(cells))
+        rows.append(f"{row_label} " + " ".join(cells))
     return "\n".join(rows)
 
 
@@ -85,7 +87,7 @@ class ConsoleObserver(GameObserver):
 
     def on_game_start(self, names: dict[Side, str], board: Board) -> None:
         self._names = names
-        print("Snakes and Mice — a random game\n")
+        print("Snakes and Mice\n")
         print(f"🐭 Mouse: {names[Side.MOUSE]}    🐍 Snake: {names[Side.SNAKE]}\n")
         print(render_board(board))
         self._wait("\nPress Enter to start… ")
@@ -108,8 +110,36 @@ class ConsoleObserver(GameObserver):
         print(f"\n{describe_result(result, self._names)}")
 
 
-def main() -> None:
-    """Play a random game between two bots and render it turn by turn."""
-    mouse: RandomPlayer = RandomPlayer(name="Randy")
-    snake: RandomPlayer = RandomPlayer(name="Ransom")
-    play_game(mouse, snake, ConsoleObserver(pause=True))
+_RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
+
+
+def _make_player(kind: str, side: Side) -> Player:
+    if kind == "human":
+        return HumanPlayer(name="You")
+    return RandomPlayer(name=_RANDOM_NAME[side])
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Play a game and render it turn by turn.
+
+    By default two random bots play (watch mode, pausing between turns). Pass
+    ``--mouse human`` and/or ``--snake human`` to take a seat; with a human in
+    the game there is no between-turns pause — the human's own input paces it.
+    """
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog="snakes-and-mice", description="Play or watch a game of Snakes and Mice."
+    )
+    parser.add_argument(
+        "--mouse", choices=["random", "human"], default="random",
+        help="who plays Mouse (default: random)",
+    )
+    parser.add_argument(
+        "--snake", choices=["random", "human"], default="random",
+        help="who plays Snake (default: random)",
+    )
+    args: argparse.Namespace = parser.parse_args(argv)
+
+    mouse: Player = _make_player(args.mouse, Side.MOUSE)
+    snake: Player = _make_player(args.snake, Side.SNAKE)
+    has_human: bool = "human" in (args.mouse, args.snake)
+    play_game(mouse, snake, ConsoleObserver(pause=not has_human))

@@ -78,6 +78,19 @@ def test_empty_cells_excludes_seed_and_occupied() -> None:
     assert len(board.empty_cells()) == BOARD_SIZE * BOARD_SIZE - 2
 
 
+def test_copy_is_independent() -> None:
+    board = Board()
+    board.place(Cell.from_label("A1"), Side.MOUSE)
+    clone = board.copy()
+    # The clone starts equal to the original...
+    assert clone.occupant(Cell.from_label("A1")) is Side.MOUSE
+    assert clone.occupant(Cell.from_label("B3")) is Side.SNAKE
+    # ...but mutating one does not affect the other.
+    clone.place(Cell.from_label("C3"), Side.MOUSE)
+    assert board.is_empty(Cell.from_label("C3"))
+    assert not clone.is_empty(Cell.from_label("C3"))
+
+
 def test_winner_by_row() -> None:
     board = Board()
     for col in range(5):
