@@ -1,0 +1,166 @@
+"""Tests for the LLM player, driven by Pydantic AI's :class:`FunctionModel`.
+
+No network is used: a scripted model returns a fixed sequence of structured
+``LLMMove`` responses, so we can exercise move parsing, fault mapping, the
+cross-game message thread (rules once, opponent moves relayed, feedback carried
+forward), and message logging deterministically.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from pydantic_ai import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from snakes_and_mice import (
+    GameResult,
+    Move,
+    MoveUnavailable,
+    PlayerFaultDetail,
+    PlayerFaultReason,
+    Side,
+    Termination,
+    TurnOutcome,
+    play_game,
+)
+from snakes_and_mice.players import LLMPlayer
+from snakes_and_mice.players.llm import RULES_PREAMBLE
+
+
+def _move(
+    cells: list[str], outcome: str = "in_play", rationale: str = "because"
+) -> dict[str, object]:
+    """One scripted structured response for the model to return."""
+    return {"move_rationale": rationale, "cells": cells, "claimed_outcome": outcome}
+
+
+def _scripted(
+    moves: list[dict[str, object]], captured: list[str] | None = None
+) -> FunctionModel:
+    """A model that returns ``moves`` in order, optionally recording the user
+    prompt (the flushed messages) it was handed on each call."""
+    state: dict[str, int] = {"i": 0}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if captured is not None:
+            request: ModelMessage = messages[-1]
+            texts: list[str] = [
+                str(part.content)
+                for part in request.parts
+                if isinstance(part, UserPromptPart)
+            ]
+            captured.append("\n".join(texts))
+        args: dict[str, object] = moves[state["i"]]
+        state["i"] += 1
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)]
+        )
+
+    return FunctionModel(respond)
+
+
+def test_choose_move_returns_parsed_move_and_claim() -> None:
+    player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"], "in_play")]))
+    player.start_game(Side.MOUSE)
+
+    choice = player.choose_move()
+
+    assert str(choice.move) == "A1 A2"
+    assert choice.claimed_outcome is TurnOutcome.IN_PLAY
+
+
+@pytest.mark.parametrize(
+    "cells,reason",
+    [
+        (["Z9"], PlayerFaultReason.OFF_BOARD),
+        (["A1", "A1"], PlayerFaultReason.DUPLICATE_CELLS),
+        (["A1", "A2", "A3"], PlayerFaultReason.WRONG_PIECE_COUNT),
+        ([], PlayerFaultReason.WRONG_PIECE_COUNT),
+        (["nonsense"], PlayerFaultReason.UNPARSEABLE_OUTPUT),
+    ],
+)
+def test_bad_cells_map_to_move_unavailable(
+    cells: list[str], reason: PlayerFaultReason
+) -> None:
+    player: LLMPlayer = LLMPlayer(_scripted([_move(cells)]))
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(MoveUnavailable) as excinfo:
+        player.choose_move()
+    assert excinfo.value.reason is reason
+
+
+def test_full_game_relays_opponent_moves_only() -> None:
+    # Mouse takes the whole of row A over three turns (the last a single, winning
+    # piece); snake plays harmlessly along row E.
+    seen: list[str] = []
+    mouse: LLMPlayer = LLMPlayer(
+        _scripted(
+            [_move(["A1", "A2"]), _move(["A3", "A4"]), _move(["A5"], "win")], seen
+        ),
+        name="Mona",
+    )
+    snake: LLMPlayer = LLMPlayer(
+        _scripted([_move(["E1", "E2"]), _move(["E3", "E4"])]), name="Sly"
+    )
+
+    result: GameResult = play_game(mouse, snake)
+
+    assert result.termination is Termination.LINE_COMPLETED
+    assert result.winner is Side.MOUSE
+    # By its second turn, the mouse was told the snake's first move…
+    assert "Your opponent (snake) played E1 E2." in seen[1]
+    # …but its own moves are never relayed back to it as opponent moves.
+    assert all("opponent (mouse)" not in prompt for prompt in seen)
+
+
+def test_rules_sent_once_and_fault_feedback_carried_forward() -> None:
+    seen: list[str] = []
+    player: LLMPlayer = LLMPlayer(
+        _scripted([_move(["A1", "A2"], "win"), _move(["B1", "B2"])], seen)
+    )
+
+    player.start_game(Side.MOUSE)
+    player.choose_move()  # game 1
+    player.end_game(
+        GameResult(
+            Termination.PLAYER_FAULT,
+            fault=PlayerFaultDetail(
+                offender=Side.MOUSE,
+                reason=PlayerFaultReason.WRONG_OUTCOME_CLAIM,
+                attempted_move=Move.from_labels("A1", "A2"),
+                claimed_outcome=TurnOutcome.WIN,
+                actual_outcome=TurnOutcome.IN_PLAY,
+            ),
+        )
+    )
+    player.start_game(Side.MOUSE)  # game 2
+    player.choose_move()
+
+    assert RULES_PREAMBLE in seen[0]  # opening rules preamble, on the first turn…
+    assert RULES_PREAMBLE not in seen[1]  # …and never again
+    assert "claimed win but it was actually in_play" in seen[1]  # the feedback
+
+
+def test_message_logging_writes_replayable_thread(tmp_path: Path) -> None:
+    log_dir: Path = tmp_path / "logs"
+    player: LLMPlayer = LLMPlayer(
+        _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
+    )
+    player.start_game(Side.SNAKE)
+    player.choose_move()
+
+    log_file: Path = log_dir / "bot-snake.json"
+    assert log_file.exists()
+    messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_json(
+        log_file.read_bytes()
+    )
+    assert len(messages) >= 2  # at least the user turn and the model response

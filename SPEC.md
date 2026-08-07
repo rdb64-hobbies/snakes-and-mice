@@ -477,7 +477,7 @@ implementation order (the first three are implemented — see the milestones in 
    outcome claim. End-of-input concedes the turn (a `PLAYER_FAULT`). Its input and
    output are injectable so it can be driven deterministically in tests. The
    engine stays the source of truth; the local checks only spare avoidable faults.
-4. **LLM player** *(planned — 1.0)*. Chooses moves by querying a large language
+4. **LLM player** *(implemented — 0.5)*. Chooses moves by querying a large language
    model via Pydantic AI, with support for a **range of LLM providers and models**
    (Anthropic, OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom
    endpoints). Specified in full in §11.
@@ -885,13 +885,19 @@ progress toward that, not incidental churn.
   - **0.3** — the interactive human player.
   - **0.4** — matches (§12): two fixed players over a sequence of games with
     tallied results, the generalized `Observer` with `ObservationLevel`, and the
-    `--games` / `--watch` CLI. *(current)*
-- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§11)
-  and the **tournament structure** (§10) land together: only then can the project
-  do what it exists to do — pit LLMs against each other, and against strong
-  non-LLM players, over many games and score them. Other 0.x milestones (e.g. a
-  heuristic or MCTS player, §10) may ship first, but **1.0 is defined by that
-  LLM-player + tournament pair**, regardless of what else arrives before it.
+    `--games` / `--watch` CLI.
+  - **0.5** — the **LLM player** (§11): moves chosen by a model via Pydantic AI
+    across a range of providers, a single cross-game message thread with
+    feedback, structured output with fault mapping, YAML roster / provider config
+    (keys in `.env`), the `--mouse`/`--snake` roster names, and `--log-llm`
+    message logging. *(current)*
+- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§11,
+  landed in 0.5) can be driven by the **tournament structure** (§10): only then
+  can the project do what it exists to do — pit LLMs against each other, and
+  against strong non-LLM players, over many games and score them. Other 0.x
+  milestones (e.g. a heuristic or MCTS player, §10) may ship first, but **1.0 is
+  defined by the LLM-player + tournament pair**, regardless of what else arrives
+  before it.
 - **After 1.0**, standard SemVer applies: incompatible changes to the player API
   or CLI bump the major, backward-compatible capabilities bump the minor, and
   fixes bump the patch.

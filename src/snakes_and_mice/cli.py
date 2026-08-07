@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from .board import Board
+from .config import (
+    ConfigError,
+    Roster,
+    load_environment,
+    load_roster,
+    make_llm_player,
+)
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
 from .match import play_match
 from .observer import ObservationLevel, Observer
@@ -154,12 +162,20 @@ class ConsoleObserver(Observer):
 
 
 _RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
+_DEFAULT_LOG_DIR: str = "llm-logs"
 
 
-def _make_player(kind: str, side: Side) -> Player:
+def _make_player(
+    kind: str, side: Side, roster: Roster | None, log_dir: Path | None
+) -> Player:
+    """Build the player for one side. ``kind`` is ``random``, ``human``, or an
+    LLM roster name (in which case ``roster`` must be loaded)."""
     if kind == "human":
         return HumanPlayer(name="You")
-    return RandomPlayer(name=_RANDOM_NAME[side])
+    if kind == "random":
+        return RandomPlayer(name=_RANDOM_NAME[side])
+    assert roster is not None  # a roster is loaded whenever an LLM name is used
+    return make_llm_player(kind, roster, log_dir=log_dir)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -167,21 +183,23 @@ def main(argv: list[str] | None = None) -> None:
 
     By default two random bots play a single game at ``move`` detail. Pass
     ``--games N`` for a longer match and ``--watch match|game|move`` to choose
-    how much is shown. Pass ``--mouse human`` and/or ``--snake human`` to take a
-    seat; a human at the board always forces ``move`` detail (with a note), since
-    a human must see every move to play it.
+    how much is shown. ``--mouse`` and ``--snake`` each name who plays that side:
+    ``random``, ``human``, or an LLM roster name from ``players.yaml``. A human at
+    the board always forces ``move`` detail (with a note), since a human must see
+    every move to play it. ``--log-llm [DIR]`` dumps each LLM player's full raw
+    message thread as JSON for debugging.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="snakes-and-mice",
         description="Play or watch a match of Snakes and Mice.",
     )
     parser.add_argument(
-        "--mouse", choices=["random", "human"], default="random",
-        help="who plays Mouse (default: random)",
+        "--mouse", default="random", metavar="WHO",
+        help="who plays Mouse: random, human, or an LLM roster name (default: random)",
     )
     parser.add_argument(
-        "--snake", choices=["random", "human"], default="random",
-        help="who plays Snake (default: random)",
+        "--snake", default="random", metavar="WHO",
+        help="who plays Snake: random, human, or an LLM roster name (default: random)",
     )
     parser.add_argument(
         "--games", type=int, default=1, metavar="N",
@@ -191,13 +209,32 @@ def main(argv: list[str] | None = None) -> None:
         "--watch", choices=["match", "game", "move"], default="move",
         help="how much to show: match, game, or every move (default: move)",
     )
+    parser.add_argument(
+        "--log-llm", nargs="?", const=_DEFAULT_LOG_DIR, default=None, metavar="DIR",
+        help=(
+            "dump each LLM player's full message thread as JSON for debugging "
+            f"(default DIR: {_DEFAULT_LOG_DIR}/); no-op for random/human"
+        ),
+    )
     args: argparse.Namespace = parser.parse_args(argv)
 
     if args.games < 1:
         parser.error("--games must be at least 1")
 
-    mouse: Player = _make_player(args.mouse, Side.MOUSE)
-    snake: Player = _make_player(args.snake, Side.SNAKE)
+    log_dir: Path | None = Path(args.log_llm) if args.log_llm is not None else None
+    builtin: set[str] = {"random", "human"}
+    needs_roster: bool = args.mouse not in builtin or args.snake not in builtin
+
+    roster: Roster | None = None
+    try:
+        if needs_roster:
+            load_environment()
+            roster = load_roster()
+        mouse: Player = _make_player(args.mouse, Side.MOUSE, roster, log_dir)
+        snake: Player = _make_player(args.snake, Side.SNAKE, roster, log_dir)
+    except ConfigError as exc:
+        parser.error(str(exc))
+
     has_human: bool = "human" in (args.mouse, args.snake)
     level: ObservationLevel = ObservationLevel[args.watch.upper()]
     if has_human and level < ObservationLevel.MOVE:

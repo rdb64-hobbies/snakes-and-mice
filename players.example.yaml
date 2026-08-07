@@ -1,0 +1,29 @@
+# Roster of available LLM players. Copy this file to players.yaml (git-ignored)
+# and edit it. Each entry is:
+#   name:     free-form identity used in matches and standings (independent of
+#             the model — in common use it will just echo the model name)
+#   provider: anthropic | openai | gemini | openrouter | a custom provider name
+#             defined in providers.yaml
+#   model:    the provider's model name
+#
+# API keys are NOT set here — they live in .env (see .env.example).
+players:
+  - name: opus
+    provider: anthropic
+    model: claude-opus-4-8
+
+  - name: gpt5
+    provider: openai
+    model: gpt-5
+
+  - name: gemini-pro
+    provider: gemini
+    model: gemini-3-pro
+
+  - name: kimi
+    provider: openrouter
+    model: moonshotai/kimi-k2
+
+  - name: llama-local
+    provider: my-ollama # a custom provider, defined in providers.yaml
+    model: llama3.3

@@ -1,0 +1,17 @@
+# Custom OpenAI-compatible endpoints ONLY (e.g. ollama, vLLM). The built-in
+# providers — anthropic, openai, gemini, openrouter — are supported directly and
+# must NOT be listed here. Copy this file to providers.yaml (git-ignored) and
+# edit it; it is optional and only needed if players.yaml references a custom
+# provider. Each entry is:
+#   name:        the provider name referenced from players.yaml
+#   base_url:    the endpoint's OpenAI-compatible base URL
+#   api_key_env: (optional) the environment variable holding its key; omit for a
+#                local endpoint that needs no key
+providers:
+  - name: my-ollama
+    base_url: http://localhost:11434/v1
+    # no api_key_env — a local ollama endpoint needs no key
+
+  - name: my-vllm
+    base_url: http://gpu-box:8000/v1
+    api_key_env: VLLM_API_KEY

@@ -18,7 +18,14 @@ from .faults import (
 from .game import play_game
 from .match import play_match
 from .observer import ObservationLevel, Observer
-from .players import HumanPlayer, Player, RandomPlayer, ScriptedPlayer
+from .players import (
+    HumanPlayer,
+    LLMMove,
+    LLMPlayer,
+    Player,
+    RandomPlayer,
+    ScriptedPlayer,
+)
 from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
 
 __all__ = [
@@ -28,6 +35,8 @@ __all__ = [
     "GameResult",
     "HumanPlayer",
     "IllegalMove",
+    "LLMMove",
+    "LLMPlayer",
     "MatchResult",
     "Move",
     "MoveChoice",

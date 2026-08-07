@@ -34,6 +34,9 @@ htmlcov/
 players.yaml
 providers.yaml
 
+# LLM message-thread logs (--log-llm), a local debugging artifact
+llm-logs/
+
 # OS / editor cruft
 .DS_Store
 *.swp
