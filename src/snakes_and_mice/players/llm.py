@@ -22,12 +22,25 @@ from pathlib import Path
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
 
 from ..core import Move, MoveChoice, Side, TurnOutcome
-from ..faults import IllegalMove, MoveUnavailable, PlayerFaultReason
+from ..faults import (
+    IllegalMove,
+    MoveUnavailable,
+    PlayerFaultReason,
+    SnakesAndMiceError,
+)
 from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
+
+
+class ModelRequestError(SnakesAndMiceError):
+    """The call to a model's provider failed for a reason that is not a game
+    fault — a misspelled or unavailable model, a rejected key, a rate limit, or a
+    network problem. It is an environment/configuration error, so it aborts the
+    run with a clear message rather than ending a game against the player."""
 
 
 class LLMMove(BaseModel):
@@ -168,6 +181,14 @@ class LLMPlayer(Player):
             raise MoveUnavailable(
                 PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
             ) from exc
+        except (ModelAPIError, UserError) as exc:
+            # The provider call could not be made or failed: a bad model name, a
+            # rejected key, a rate limit, a network error (ModelAPIError), or a
+            # model/capability mismatch caught client-side before any request
+            # (UserError — e.g. an unknown Anthropic model rejecting native
+            # output). None of these is a game fault, so surface a clear message
+            # instead of letting a raw traceback escape.
+            raise ModelRequestError(self._describe_backend_error(exc)) from exc
 
         self._history = list(result.all_messages())
         self._write_log()
@@ -192,6 +213,39 @@ class LLMPlayer(Player):
             raise MoveUnavailable(
                 PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
             ) from exc
+
+    def _describe_backend_error(self, exc: ModelAPIError | UserError) -> str:
+        """A short, actionable message for a failed provider call (see
+        :class:`ModelRequestError`)."""
+        if isinstance(exc, ModelHTTPError):
+            hint: str
+            if exc.status_code == 404:
+                hint = (
+                    "the model name may be misspelled or unavailable from this "
+                    "provider — check it in players.yaml"
+                )
+            elif exc.status_code in (401, 403):
+                hint = "the provider rejected the API key — check it in your .env"
+            elif exc.status_code == 429:
+                hint = "the provider is rate-limiting — wait and try again"
+            else:
+                hint = "check the model name in players.yaml and your provider setup"
+            return (
+                f"player {self.name!r} could not use model {exc.model_name!r}: "
+                f"provider returned HTTP {exc.status_code} — {hint}"
+            )
+        if isinstance(exc, ModelAPIError):
+            return (
+                f"player {self.name!r} could not reach its model ({exc}); "
+                f"check your network and provider configuration"
+            )
+        # UserError: a client-side model/capability mismatch (e.g. an unknown
+        # model name that the provider profile can't confirm supports the output
+        # mode). Surface the underlying message and point at the likely cause.
+        return (
+            f"player {self.name!r} could not use its model ({exc}); "
+            f"check the model name in players.yaml is correct for this provider"
+        )
 
     def _describe_end(self, result: GameResult) -> str:
         """A message telling the model how the game ended, from its perspective.

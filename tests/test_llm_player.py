@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -34,7 +35,7 @@ from snakes_and_mice import (
     play_game,
 )
 from snakes_and_mice.players import LLMPlayer
-from snakes_and_mice.players.llm import LLMMove, RULES_PREAMBLE
+from snakes_and_mice.players.llm import LLMMove, ModelRequestError, RULES_PREAMBLE
 
 
 def _move(
@@ -75,6 +76,17 @@ def _scripted(
     )
 
 
+def _failing_agent(exc: Exception) -> Agent[None, LLMMove]:
+    """An agent whose model raises ``exc`` on the first call."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise exc
+
+    return Agent(
+        model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
+    )
+
+
 def test_choose_move_returns_parsed_move_and_claim() -> None:
     player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"], "in_play")]))
     player.start_game(Side.MOUSE)
@@ -104,6 +116,24 @@ def test_bad_cells_map_to_move_unavailable(
     with pytest.raises(MoveUnavailable) as excinfo:
         player.choose_move()
     assert excinfo.value.reason is reason
+
+
+def test_provider_error_becomes_model_request_error() -> None:
+    # A failed provider call (here a 404 for an unavailable model) is not a game
+    # fault: it surfaces as a ModelRequestError naming the player, model, and
+    # status, so the CLI can print a clean message instead of a traceback.
+    player: LLMPlayer = LLMPlayer(
+        _failing_agent(ModelHTTPError(status_code=404, model_name="bad-model")),
+        name="opus",
+    )
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(ModelRequestError) as excinfo:
+        player.choose_move()
+    message: str = str(excinfo.value)
+    assert "opus" in message
+    assert "bad-model" in message
+    assert "404" in message
 
 
 def test_full_game_relays_opponent_moves_only() -> None:

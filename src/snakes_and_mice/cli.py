@@ -17,7 +17,7 @@ from .config import (
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
 from .match import play_match
 from .observer import ObservationLevel, Observer
-from .players import HumanPlayer, Player, RandomPlayer
+from .players import HumanPlayer, ModelRequestError, Player, RandomPlayer
 from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
 
 # The piece glyphs are emoji, which occupy TWO display columns in a terminal.
@@ -264,4 +264,9 @@ def main(argv: list[str] | None = None) -> None:
     if has_human and level < ObservationLevel.MOVE:
         print("(a human is playing — showing every move)\n")
         level = ObservationLevel.MOVE
-    play_match(mouse, snake, args.games, ConsoleObserver(level))
+    try:
+        play_match(mouse, snake, args.games, ConsoleObserver(level))
+    except ModelRequestError as exc:
+        # A provider call failed mid-game (e.g. an unavailable model); report it
+        # as a clean message instead of an escaping traceback.
+        parser.error(str(exc))
