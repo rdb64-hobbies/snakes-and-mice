@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from .board import Board
@@ -164,6 +165,20 @@ class ConsoleObserver(Observer):
 _RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
 _DEFAULT_LOG_DIR: str = "llm-logs"
 
+# HTTP client loggers that would otherwise print an INFO line per model request
+# (e.g. "HTTP Request: POST .../responses 200 OK") into the middle of the board.
+_NOISY_LOGGERS: tuple[str, ...] = ("httpx", "httpcore", "openai")
+
+
+def _quiet_http_logging() -> None:
+    """Silence per-request HTTP INFO logs so they don't clutter the board.
+
+    Only the CLI does this: it owns the terminal, whereas the library must not
+    reconfigure a host application's logging.
+    """
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
 
 def _make_player(
     kind: str, side: Side, roster: Roster | None, log_dir: Path | None
@@ -220,6 +235,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.games < 1:
         parser.error("--games must be at least 1")
+
+    _quiet_http_logging()
 
     log_dir: Path | None = Path(args.log_llm) if args.log_llm is not None else None
     builtin: set[str] = {"random", "human"}

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
 
 from snakes_and_mice.config import (
@@ -99,7 +99,7 @@ def test_resolve_builtin_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert isinstance(anthropic, AnthropicModel)
-    assert isinstance(openai, OpenAIChatModel)
+    assert isinstance(openai, OpenAIResponsesModel)  # Responses API, not Chat
     assert isinstance(gemini, GoogleModel)
     assert isinstance(router, OpenRouterModel)
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
@@ -125,7 +125,10 @@ def resolve_model(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> Model
             spec.model, provider=AnthropicProvider(api_key=_require_key(provider))
         )
     if provider == "openai":
-        return OpenAIChatModel(
+        # The Responses API (not Chat Completions) is what supports OpenAI's
+        # reasoning effort together with the function/output tool our structured
+        # output relies on.
+        return OpenAIResponsesModel(
             spec.model, provider=OpenAIProvider(api_key=_require_key(provider))
         )
     if provider == "gemini":

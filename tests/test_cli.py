@@ -7,6 +7,8 @@ that level asks for.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from snakes_and_mice import (
@@ -17,7 +19,7 @@ from snakes_and_mice import (
     play_match,
 )
 from snakes_and_mice.core import Move
-from snakes_and_mice.cli import ConsoleObserver
+from snakes_and_mice.cli import ConsoleObserver, main
 
 
 def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
@@ -72,6 +74,15 @@ def test_watch_match_shows_only_banner_and_tally(
     assert "Turn 1" not in out  # no per-move narration
     assert "=== Game" not in out  # no per-game headers
     assert "(mouse) wins." not in out  # no per-game results
+
+
+def test_main_quiets_http_request_logging(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The per-request httpx INFO logs must not bleed into the board rendering.
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    main(["--watch", "match"])  # two random players, no network
+    assert logging.getLogger("httpx").level == logging.WARNING
 
 
 def test_single_game_omits_match_scaffolding(

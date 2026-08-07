@@ -35,8 +35,10 @@ from .base import Player
 ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
 """Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
 
-DEFAULT_THINKING: ThinkingLevel = "xhigh"
-"""Every LLM player reasons at full strength by default (§11)."""
+DEFAULT_THINKING: ThinkingLevel = "high"
+"""The global default reasoning effort every LLM player uses (§11). ``high``
+rather than ``xhigh`` keeps strong reasoning without the steep cost of the top
+tier."""
 
 
 class LLMMove(BaseModel):

@@ -682,10 +682,11 @@ budget, OpenAI's reasoning effort, Gemini's thinking budget, …) and maps an
 unsupported level to the nearest available one.
 
 For now every LLM player uses the **same** level — a single global default, set to
-**`xhigh`** (highest) — so each model reasons at full strength and comparisons are
-made at each model's best. "Consistent" here means *each model at its own top
-setting*, not a byte-identical configuration across providers. Per-player effort
-levels and provider-specific setting overrides are deliberately deferred.
+**`high`** — so each model reasons strongly and comparisons are made on an even
+footing, without the steep cost of the top (`xhigh`) tier. "Consistent" here means
+*each model at the same effort level*, not a byte-identical configuration across
+providers. Per-player effort levels and provider-specific setting overrides are
+deliberately deferred.
 
 ### Message logging (debugging)
 
