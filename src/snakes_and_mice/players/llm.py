@@ -19,26 +19,15 @@ game's opening (§11, "No retries").
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import Model
-from pydantic_ai.settings import ModelSettings
 
 from ..core import Move, MoveChoice, Side, TurnOutcome
 from ..faults import IllegalMove, MoveUnavailable, PlayerFaultReason
 from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
-
-ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
-"""Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
-
-DEFAULT_THINKING: ThinkingLevel = "high"
-"""The global default reasoning effort every LLM player uses (§11). ``high``
-rather than ``xhigh`` keeps strong reasoning without the steep cost of the top
-tier."""
 
 
 class LLMMove(BaseModel):
@@ -131,19 +120,17 @@ class LLMPlayer(Player):
 
     def __init__(
         self,
-        model: Model,
+        agent: Agent[None, LLMMove],
         name: str | None = None,
         *,
-        thinking: ThinkingLevel = DEFAULT_THINKING,
         log_dir: Path | None = None,
     ) -> None:
         super().__init__(name)
-        self._agent: Agent[None, LLMMove] = Agent(
-            model=model,
-            output_type=LLMMove,
-            model_settings=ModelSettings(thinking=thinking),
-            retries=0,  # no re-prompting within a game (§11, "No retries")
-        )
+        # The agent is built and configured by the config layer, which alone knows
+        # the provider and so can pick the right output mode and settings for it
+        # (e.g. NativeOutput for Anthropic). The player stays provider-agnostic: it
+        # only drives the message thread and reads back an LLMMove.
+        self._agent: Agent[None, LLMMove] = agent
         self._log_dir: Path | None = log_dir
         # The running conversation (spans every game) and the messages queued for
         # the next user turn, flushed on the following choose_move. The one-time

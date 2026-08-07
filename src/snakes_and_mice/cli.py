@@ -165,9 +165,16 @@ class ConsoleObserver(Observer):
 _RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
 _DEFAULT_LOG_DIR: str = "llm-logs"
 
-# HTTP client loggers that would otherwise print an INFO line per model request
-# (e.g. "HTTP Request: POST .../responses 200 OK") into the middle of the board.
-_NOISY_LOGGERS: tuple[str, ...] = ("httpx", "httpcore", "openai")
+# HTTP/SDK client loggers that would otherwise print a per-request line (an httpx
+# "HTTP Request: POST ..." INFO, or an Anthropic request-id DEBUG) into the middle
+# of the board.
+_NOISY_LOGGERS: tuple[str, ...] = (
+    "httpx",
+    "httpcore",
+    "openai",
+    "anthropic",
+    "google_genai",
+)
 
 
 def _quiet_http_logging() -> None:

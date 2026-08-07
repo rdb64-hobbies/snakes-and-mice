@@ -14,10 +14,12 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
+from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
@@ -27,9 +29,10 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.settings import ModelSettings
 
 from .faults import SnakesAndMiceError
-from .players.llm import DEFAULT_THINKING, LLMPlayer, ThinkingLevel
+from .players.llm import LLMMove, LLMPlayer
 
 DEFAULT_PLAYERS_PATH: Path = Path("players.yaml")
 DEFAULT_PROVIDERS_PATH: Path = Path("providers.yaml")
@@ -44,6 +47,28 @@ _BUILTIN_KEY_ENV: dict[str, str] = {
     "gemini": "GEMINI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
 }
+
+ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
+"""Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
+
+DEFAULT_THINKING: ThinkingLevel = "high"
+"""The global default reasoning effort every LLM player uses (§11). ``high``
+rather than ``xhigh`` keeps strong reasoning without the steep cost of the top
+tier."""
+
+MAX_OUTPUT_TOKENS: int = 16384
+"""Upper bound on tokens per response. Pydantic AI's default cap is 4096, and on
+Anthropic that ceiling covers the thinking *and* the answer together — at high
+effort the reasoning alone can approach it and clip the trailing JSON, which then
+fails to parse and faults as UNPARSEABLE_OUTPUT. A generous cap leaves room for
+both; only tokens actually produced are billed, so raising it costs nothing on a
+short answer."""
+
+# Providers whose structured output must use the model's native JSON-schema
+# response format instead of an output tool. Anthropic forbids combining an
+# output tool with thinking, so it needs native output; the others were validated
+# with Pydantic AI's default tool-based output and keep it.
+_NATIVE_OUTPUT_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
 
 class ConfigError(SnakesAndMiceError):
@@ -159,6 +184,36 @@ def resolve_model(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> Model
     )
 
 
+def resolve_agent(
+    spec: PlayerSpec,
+    providers: dict[str, ProviderSpec],
+    *,
+    thinking: ThinkingLevel = DEFAULT_THINKING,
+) -> Agent[None, LLMMove]:
+    """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
+
+    Provider knowledge lives here, not in the player: the model is resolved and
+    then wrapped in an agent whose output mode fits the provider — native
+    JSON-schema output where an output tool cannot coexist with thinking
+    (Anthropic), the default tool-based output everywhere else. ``retries=0``
+    (both branches) enforces §11's "no re-prompting within a game".
+    """
+    model: Model = resolve_model(spec, providers)
+    settings: ModelSettings = ModelSettings(
+        thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS
+    )
+    if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
+        return Agent(
+            model=model,
+            output_type=NativeOutput(LLMMove),
+            model_settings=settings,
+            retries=0,
+        )
+    return Agent(
+        model=model, output_type=LLMMove, model_settings=settings, retries=0
+    )
+
+
 def make_llm_player(
     name: str,
     roster: Roster,
@@ -176,8 +231,10 @@ def make_llm_player(
             f"no player named {name!r} in the roster; "
             f"available: {', '.join(sorted(roster.players)) or '(none)'}"
         )
-    model: Model = resolve_model(spec, roster.providers)
-    return LLMPlayer(model, name=spec.name, thinking=thinking, log_dir=log_dir)
+    agent: Agent[None, LLMMove] = resolve_agent(
+        spec, roster.providers, thinking=thinking
+    )
+    return LLMPlayer(agent, name=spec.name, log_dir=log_dir)
 
 
 def _require_key(provider: str) -> str:

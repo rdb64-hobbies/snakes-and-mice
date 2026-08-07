@@ -3,19 +3,21 @@
 No network is used: a scripted model returns a fixed sequence of structured
 ``LLMMove`` responses, so we can exercise move parsing, fault mapping, the
 cross-game message thread (rules once, opponent moves relayed, feedback carried
-forward), and message logging deterministically.
+forward), and message logging deterministically. The player uses
+``NativeOutput``, so a response is a plain JSON ``TextPart`` (no output tool).
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-from pydantic_ai import ModelMessagesTypeAdapter
+from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    ToolCallPart,
+    TextPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -32,7 +34,7 @@ from snakes_and_mice import (
     play_game,
 )
 from snakes_and_mice.players import LLMPlayer
-from snakes_and_mice.players.llm import RULES_PREAMBLE
+from snakes_and_mice.players.llm import LLMMove, RULES_PREAMBLE
 
 
 def _move(
@@ -44,9 +46,15 @@ def _move(
 
 def _scripted(
     moves: list[dict[str, object]], captured: list[str] | None = None
-) -> FunctionModel:
-    """A model that returns ``moves`` in order, optionally recording the user
-    prompt (the flushed messages) it was handed on each call."""
+) -> Agent[None, LLMMove]:
+    """An agent whose model returns ``moves`` in order, optionally recording the
+    user prompt (the flushed messages) it was handed on each call.
+
+    The player no longer builds its own agent — the config layer does, choosing
+    the output mode per provider — so tests inject one here. It mirrors the
+    Anthropic path (``NativeOutput``): the scripted model returns each move as
+    JSON in a text response rather than an output-tool call.
+    """
     state: dict[str, int] = {"i": 0}
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -60,11 +68,11 @@ def _scripted(
             captured.append("\n".join(texts))
         args: dict[str, object] = moves[state["i"]]
         state["i"] += 1
-        return ModelResponse(
-            parts=[ToolCallPart(tool_name=info.output_tools[0].name, args=args)]
-        )
+        return ModelResponse(parts=[TextPart(content=json.dumps(args))])
 
-    return FunctionModel(respond)
+    return Agent(
+        model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
+    )
 
 
 def test_choose_move_returns_parsed_move_and_claim() -> None:

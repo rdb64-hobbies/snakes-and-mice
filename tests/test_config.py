@@ -25,6 +25,7 @@ from snakes_and_mice.config import (
     load_environment,
     load_roster,
     make_llm_player,
+    resolve_agent,
     resolve_model,
 )
 from snakes_and_mice.players import LLMPlayer
@@ -129,6 +130,21 @@ def test_resolve_missing_key_is_an_error(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_resolve_unknown_provider_is_an_error() -> None:
     with pytest.raises(ConfigError, match="unknown provider"):
         resolve_model(PlayerSpec(name="x", provider="nope", model="m"), {})
+
+
+def test_resolve_agent_output_mode_by_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    # Anthropic cannot combine an output tool with thinking, so its agent must use
+    # the provider's native JSON-schema output; other providers keep Pydantic AI's
+    # default (auto/tool-based) output that they were validated against.
+    anthropic = resolve_agent(PlayerSpec(name="a", provider="anthropic", model="m"), {})
+    openai = resolve_agent(PlayerSpec(name="o", provider="openai", model="m"), {})
+
+    assert type(anthropic._output_schema).__name__ == "NativeOutputSchema"
+    assert type(openai._output_schema).__name__ != "NativeOutputSchema"
 
 
 def test_make_llm_player_builds_named_player(
