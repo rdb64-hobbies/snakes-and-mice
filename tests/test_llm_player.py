@@ -35,7 +35,8 @@ from snakes_and_mice import (
     play_game,
 )
 from snakes_and_mice.players import LLMPlayer
-from snakes_and_mice.players.llm import LLMMove, ModelRequestError, RULES_PREAMBLE
+from snakes_and_mice.players.llm import LLMMove, ModelRequestError
+from snakes_and_mice.players.prompts import RULES_PREAMBLE
 
 
 def _move(
