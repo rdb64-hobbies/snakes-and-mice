@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections import Counter
 from pathlib import Path
 
 from .board import Board
@@ -15,6 +16,7 @@ from .config import (
     make_llm_player,
 )
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
+from .faults import PlayerFaultReason
 from .match import play_match
 from .observer import ObservationLevel, Observer
 from .players import HumanPlayer, ModelRequestError, Player, RandomPlayer
@@ -54,7 +56,7 @@ def render_board(board: Board) -> str:
     return "\n".join(rows)
 
 
-def describe_result(result: GameResult, players: dict[Side, str]) -> str:
+def describe_game_result(result: GameResult, players: dict[Side, str]) -> str:
     """A one-line human-readable summary of a game result."""
     if result.termination is Termination.LINE_COMPLETED:
         assert result.winner is not None
@@ -75,7 +77,11 @@ def describe_result(result: GameResult, players: dict[Side, str]) -> str:
 
 
 def describe_match_result(result: MatchResult) -> str:
-    """A multi-line human-readable summary of a match's tallies."""
+    """A multi-line human-readable summary of a match's tallies.
+
+    When either side faulted, the fault line is followed by a per-side breakdown
+    of the fault types that side incurred (only the sides that faulted appear).
+    """
     names: dict[Side, str] = result.names
     lines: list[str] = [
         f"Match complete — {result.num_games} "
@@ -90,7 +96,28 @@ def describe_match_result(result: MatchResult) -> str:
         lines.append(
             f"  Faults: {result.mouse_faults} mouse, {result.snake_faults} snake"
         )
+        for side in Side:
+            breakdown: str = _fault_breakdown(result.faults, side)
+            if breakdown:
+                lines.append(f"    {GLYPH[side]} {side.value}: {breakdown}")
     return "\n".join(lines)
+
+
+def _fault_breakdown(faults: list[GameResult], side: Side) -> str:
+    """A ``reason ×n`` tally of one side's faults, most frequent first (ties
+    broken by name), or an empty string if that side never faulted."""
+    counts: Counter[PlayerFaultReason] = Counter(
+        game.fault.reason
+        for game in faults
+        if game.fault is not None and game.fault.offender is side
+    )
+    parts: list[str] = [
+        f"{reason.value} ×{count}"
+        for reason, count in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0].value)
+        )
+    ]
+    return ", ".join(parts)
 
 
 class ConsoleObserver(Observer):
@@ -155,7 +182,7 @@ class ConsoleObserver(Observer):
     def on_game_end(self, result: GameResult) -> None:
         if self.level < ObservationLevel.GAME:
             return
-        print(f"\n{describe_result(result, self._names)}")
+        print(f"\n{describe_game_result(result, self._names)}")
 
     def on_match_end(self, result: MatchResult) -> None:
         if self._num_games > 1:

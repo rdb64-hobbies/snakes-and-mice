@@ -18,8 +18,15 @@ from snakes_and_mice import (
     TurnOutcome,
     play_match,
 )
-from snakes_and_mice.core import Move
-from snakes_and_mice.cli import ConsoleObserver, main
+from snakes_and_mice.core import Move, Side
+from snakes_and_mice.cli import ConsoleObserver, describe_match_result, main
+from snakes_and_mice.faults import PlayerFaultReason
+from snakes_and_mice.result import (
+    GameResult,
+    MatchResult,
+    PlayerFaultDetail,
+    Termination,
+)
 
 
 def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
@@ -83,6 +90,57 @@ def test_main_quiets_http_request_logging(
     logging.getLogger("httpx").setLevel(logging.INFO)
     main(["--watch", "match"])  # two random players, no network
     assert logging.getLogger("httpx").level == logging.WARNING
+
+
+def _fault(offender: Side, reason: PlayerFaultReason) -> GameResult:
+    return GameResult(
+        Termination.PLAYER_FAULT,
+        fault=PlayerFaultDetail(offender=offender, reason=reason),
+    )
+
+
+def test_match_summary_breaks_down_faults_by_side_and_type() -> None:
+    # Three mouse faults (two of one type, one of another) and one snake fault.
+    faults: list[GameResult] = [
+        _fault(Side.MOUSE, PlayerFaultReason.UNPARSEABLE_OUTPUT),
+        _fault(Side.MOUSE, PlayerFaultReason.WRONG_OUTCOME_CLAIM),
+        _fault(Side.MOUSE, PlayerFaultReason.UNPARSEABLE_OUTPUT),
+        _fault(Side.SNAKE, PlayerFaultReason.CELL_NOT_EMPTY),
+    ]
+    result: MatchResult = MatchResult(
+        names={Side.MOUSE: "Mona", Side.SNAKE: "Sly"},
+        num_games=5,
+        mouse_wins=1,
+        snake_wins=0,
+        cats_games=0,
+        mouse_faults=3,
+        snake_faults=1,
+        faults=faults,
+    )
+
+    summary: str = describe_match_result(result)
+
+    assert "Faults: 3 mouse, 1 snake" in summary
+    # Most frequent type first, ties broken by name; only faulted sides appear.
+    assert "🐭 mouse: unparseable_output ×2, wrong_outcome_claim ×1" in summary
+    assert "🐍 snake: cell_not_empty ×1" in summary
+
+
+def test_match_summary_omits_fault_breakdown_when_clean() -> None:
+    result: MatchResult = MatchResult(
+        names={Side.MOUSE: "Mona", Side.SNAKE: "Sly"},
+        num_games=2,
+        mouse_wins=1,
+        snake_wins=1,
+        cats_games=0,
+        mouse_faults=0,
+        snake_faults=0,
+        faults=[],
+    )
+
+    summary: str = describe_match_result(result)
+
+    assert "Faults" not in summary
 
 
 def test_single_game_omits_match_scaffolding(
