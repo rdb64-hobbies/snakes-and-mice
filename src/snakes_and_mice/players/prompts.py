@@ -79,6 +79,11 @@ FAULT_ADVICE: dict[PlayerFaultReason, str] = {
         "your response could not be read as a move — return the required "
         "structured fields with one or two valid cell labels."
     ),
+    PlayerFaultReason.THINKING_LIMIT_EXCEEDED: (
+        "you ran out of output tokens while still thinking and never produced "
+        "your move — think more briefly and commit to your cells sooner, keeping "
+        "your reasoning well within the limit."
+    ),
     PlayerFaultReason.WRONG_OUTCOME_CLAIM: (
         "you misjudged the outcome of your own move — assess win, cats_game, or "
         "in_play carefully before committing each turn."

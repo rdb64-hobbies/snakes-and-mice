@@ -374,6 +374,9 @@ class PlayerFaultReason(Enum):
     # no `Move` ever reached the engine. `attempted_move` is None.
     UNPARSEABLE_OUTPUT # output could not be interpreted as a move — e.g. an LLM's
                        # structured output failed to validate / was garbage
+    THINKING_LIMIT_EXCEEDED # the model exhausted its output-token budget before
+                       # emitting a move (typically thinking up to the limit); no
+                       # move was produced, distinct from garbage output
     # (The LLM sub-spec may refine or add player-reported reasons, e.g. empty
     # response, refusal, or timeout.)
     # Engine-detected misread: the move is legal, but the player's self-assessed
@@ -413,9 +416,13 @@ Notes:
     well-typed `Move`, but the current board makes it illegal — a target cell is
     occupied, or the lone piece did not end the game. The engine's apply-time
     check raises `IllegalMove`, filling in `reason` and `attempted_move`.
-  - *Player-reported* (`UNPARSEABLE_OUTPUT`, …): the player cannot even form a
-    `Move`, so it raises `MoveUnavailable(reason)` from `choose_move`. Here the
-    **player** supplies the `reason` — the engine cannot know it.
+  - *Player-reported* (`UNPARSEABLE_OUTPUT`, `THINKING_LIMIT_EXCEEDED`, …): the
+    player cannot even form a `Move`, so it raises `MoveUnavailable(reason)` from
+    `choose_move`. Here the **player** supplies the `reason` — the engine cannot
+    know it. The LLM player distinguishes a response truncated at the output-token
+    limit (`THINKING_LIMIT_EXCEEDED`) from genuinely malformed output
+    (`UNPARSEABLE_OUTPUT`) so the next game's feedback can tell it to think more
+    briefly.
   - *Engine-detected misread* (`WRONG_OUTCOME_CLAIM`): the move is legal, but the
     player's `claimed_outcome` disagrees with the true outcome. The engine
     records the legal `attempted_move` plus `claimed_outcome` and

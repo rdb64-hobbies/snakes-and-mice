@@ -35,6 +35,12 @@ class PlayerFaultReason(Enum):
     # (attempted_move is None).
     UNPARSEABLE_OUTPUT = "unparseable_output"
 
+    # Player-reported — the model exhausted its output-token budget before
+    # emitting a move, typically by thinking right up to the limit (attempted_move
+    # is None). Distinct from UNPARSEABLE_OUTPUT: the model produced no bad move,
+    # it produced no move at all, so the feedback tells it to think more briefly.
+    THINKING_LIMIT_EXCEEDED = "thinking_limit_exceeded"
+
     # Engine-detected misread — the move is legal but the player's self-assessed
     # outcome disagrees with ground truth (claimed/actual outcomes are set).
     WRONG_OUTCOME_CLAIM = "wrong_outcome_claim"

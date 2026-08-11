@@ -28,7 +28,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse
 
 from ..core import Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
@@ -120,17 +120,22 @@ class LLMPlayer(Player):
                     user_prompt, message_history=self._history
                 )
             except UnexpectedModelBehavior as exc:
-                # The model's output could not be validated into an LLMMove even
-                # once; with no retries that ends the game as an unparseable-output
-                # fault. Persist the exchange first — including the malformed
-                # response captured above — so it reaches the log for debugging and
-                # stays in the thread, letting the next game's fault feedback point
-                # at the actual bad output rather than at nothing.
+                # The model produced no usable move; with no retries that ends the
+                # game. Persist the exchange first — including the response captured
+                # above — so it reaches the log for debugging and stays in the
+                # thread, letting the next game's fault feedback point at what
+                # actually happened rather than at nothing. A response truncated at
+                # the output-token limit (finish_reason "length", e.g. thinking that
+                # ran to the cap) is a distinct fault from genuinely malformed
+                # output, and gets its own feedback (think more briefly).
                 self._history = list(captured)
                 self._write_log()
-                raise MoveUnavailable(
-                    PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
-                ) from exc
+                reason: PlayerFaultReason = (
+                    PlayerFaultReason.THINKING_LIMIT_EXCEEDED
+                    if self._hit_token_limit(captured)
+                    else PlayerFaultReason.UNPARSEABLE_OUTPUT
+                )
+                raise MoveUnavailable(reason, str(exc)) from exc
             except (ModelAPIError, UserError) as exc:
                 # The provider call could not be made or failed: a bad model name, a
                 # rejected key, a rate limit, a network error (ModelAPIError), or a
@@ -163,6 +168,16 @@ class LLMPlayer(Player):
             raise MoveUnavailable(
                 PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
             ) from exc
+
+    @staticmethod
+    def _hit_token_limit(messages: list[ModelMessage]) -> bool:
+        """Whether the run's final response was truncated at the output-token
+        limit — the signal (``finish_reason == "length"``) that distinguishes a
+        model that ran out of budget (usually mid-thinking) from one that returned
+        genuinely unparseable output. ``messages`` are those captured from the
+        failed run; the model's response, if any, is the last of them."""
+        last: ModelMessage | None = messages[-1] if messages else None
+        return isinstance(last, ModelResponse) and last.finish_reason == "length"
 
     def _describe_backend_error(self, exc: ModelAPIError | UserError) -> str:
         """A short, actionable message for a failed provider call (see

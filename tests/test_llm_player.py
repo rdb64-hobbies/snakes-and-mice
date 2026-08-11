@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -100,6 +101,22 @@ def _malformed_agent(content: str) -> Agent[None, LLMMove]:
     )
 
 
+def _truncated_agent() -> Agent[None, LLMMove]:
+    """An agent whose model returns a thinking-only response truncated at the
+    output-token limit (finish_reason 'length'), reproducing the adaptive-thinking
+    overrun that yields no move at all."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[ThinkingPart(content="still reasoning when the budget ran out")],
+            finish_reason="length",
+        )
+
+    return Agent(
+        model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
+    )
+
+
 def test_choose_move_returns_parsed_move_and_claim() -> None:
     player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"], "in_play")]))
     player.start_game(Side.MOUSE)
@@ -172,6 +189,23 @@ def test_unparseable_output_is_logged_and_kept_in_history(tmp_path: Path) -> Non
     log_file: Path = log_dir / "bot-mouse.json"
     assert log_file.exists()
     assert "I refuse to answer in the required format." in log_file.read_text()
+
+
+def test_token_limit_truncation_is_a_distinct_fault(tmp_path: Path) -> None:
+    # A response truncated at the output-token limit (the model thought until it
+    # ran out, emitting no move) is THINKING_LIMIT_EXCEEDED, not UNPARSEABLE_OUTPUT
+    # — so the next game can tell the model to think more briefly. The truncated
+    # response is still persisted to the log and the thread.
+    log_dir: Path = tmp_path / "logs"
+    player: LLMPlayer = LLMPlayer(_truncated_agent(), name="bot", log_dir=log_dir)
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(MoveUnavailable) as excinfo:
+        player.choose_move()
+    assert excinfo.value.reason is PlayerFaultReason.THINKING_LIMIT_EXCEEDED
+
+    assert player._history and isinstance(player._history[-1], ModelResponse)
+    assert (log_dir / "bot-mouse.json").exists()
 
 
 def test_full_game_relays_opponent_moves_only() -> None:
