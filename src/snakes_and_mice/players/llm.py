@@ -21,7 +21,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic import BaseModel
-from pydantic_ai import Agent, ModelMessagesTypeAdapter, UnexpectedModelBehavior
+from pydantic_ai import (
+    Agent,
+    ModelMessagesTypeAdapter,
+    UnexpectedModelBehavior,
+    capture_run_messages,
+)
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
 
@@ -105,22 +110,35 @@ class LLMPlayer(Player):
         user_prompt: str = "\n\n".join(self._pending)
         self._pending = []
 
-        try:
-            result = self._agent.run_sync(user_prompt, message_history=self._history)
-        except UnexpectedModelBehavior as exc:
-            # The model's output could not be validated into an LLMMove even once;
-            # with no retries that ends the game as an unparseable-output fault.
-            raise MoveUnavailable(
-                PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
-            ) from exc
-        except (ModelAPIError, UserError) as exc:
-            # The provider call could not be made or failed: a bad model name, a
-            # rejected key, a rate limit, a network error (ModelAPIError), or a
-            # model/capability mismatch caught client-side before any request
-            # (UserError — e.g. an unknown Anthropic model rejecting native
-            # output). None of these is a game fault, so surface a clear message
-            # instead of letting a raw traceback escape.
-            raise ModelRequestError(self._describe_backend_error(exc)) from exc
+        # capture_run_messages records the exchange even when the run raises, so
+        # a response that fails validation is still available to us here — see the
+        # UnexpectedModelBehavior handler. It captures only the first run within
+        # its scope, which is exactly the one run we make per choose_move.
+        with capture_run_messages() as captured:
+            try:
+                result = self._agent.run_sync(
+                    user_prompt, message_history=self._history
+                )
+            except UnexpectedModelBehavior as exc:
+                # The model's output could not be validated into an LLMMove even
+                # once; with no retries that ends the game as an unparseable-output
+                # fault. Persist the exchange first — including the malformed
+                # response captured above — so it reaches the log for debugging and
+                # stays in the thread, letting the next game's fault feedback point
+                # at the actual bad output rather than at nothing.
+                self._history = list(captured)
+                self._write_log()
+                raise MoveUnavailable(
+                    PlayerFaultReason.UNPARSEABLE_OUTPUT, str(exc)
+                ) from exc
+            except (ModelAPIError, UserError) as exc:
+                # The provider call could not be made or failed: a bad model name, a
+                # rejected key, a rate limit, a network error (ModelAPIError), or a
+                # model/capability mismatch caught client-side before any request
+                # (UserError — e.g. an unknown Anthropic model rejecting native
+                # output). None of these is a game fault, so surface a clear message
+                # instead of letting a raw traceback escape.
+                raise ModelRequestError(self._describe_backend_error(exc)) from exc
 
         self._history = list(result.all_messages())
         self._write_log()

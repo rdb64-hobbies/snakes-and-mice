@@ -88,6 +88,18 @@ def _failing_agent(exc: Exception) -> Agent[None, LLMMove]:
     )
 
 
+def _malformed_agent(content: str) -> Agent[None, LLMMove]:
+    """An agent whose model returns ``content`` that cannot validate into an
+    LLMMove, so run_sync raises UnexpectedModelBehavior."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=content)])
+
+    return Agent(
+        model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
+    )
+
+
 def test_choose_move_returns_parsed_move_and_claim() -> None:
     player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"], "in_play")]))
     player.start_game(Side.MOUSE)
@@ -135,6 +147,31 @@ def test_provider_error_becomes_model_request_error() -> None:
     assert "opus" in message
     assert "bad-model" in message
     assert "404" in message
+
+
+def test_unparseable_output_is_logged_and_kept_in_history(tmp_path: Path) -> None:
+    # When the model's response can't be validated into an LLMMove, it's an
+    # unparseable-output fault — but the bad response must still be persisted: to
+    # the log (for debugging) and into the thread, so the next game's fault
+    # feedback can point at the actual output the model produced.
+    log_dir: Path = tmp_path / "logs"
+    player: LLMPlayer = LLMPlayer(
+        _malformed_agent("I refuse to answer in the required format."),
+        name="bot",
+        log_dir=log_dir,
+    )
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(MoveUnavailable) as excinfo:
+        player.choose_move()
+    assert excinfo.value.reason is PlayerFaultReason.UNPARSEABLE_OUTPUT
+
+    # The malformed exchange survives in the thread the next game will replay…
+    assert len(player._history) >= 2  # the user turn and the bad model response
+    # …and it was written to the log, bad content and all, for debugging.
+    log_file: Path = log_dir / "bot-mouse.json"
+    assert log_file.exists()
+    assert "I refuse to answer in the required format." in log_file.read_text()
 
 
 def test_full_game_relays_opponent_moves_only() -> None:
