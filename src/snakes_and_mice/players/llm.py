@@ -18,8 +18,10 @@ game's opening (§11, "No retries").
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
+import httpx
 from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
@@ -35,18 +37,39 @@ from ..faults import (
     IllegalMove,
     MoveUnavailable,
     PlayerFaultReason,
+    PlayerUnavailable,
     SnakesAndMiceError,
 )
 from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
 from .prompts import FAULT_ADVICE, RULES_PREAMBLE
 
+# Transient transport failures (read/connect timeouts, dropped connections) are
+# not the model's doing, so we retry the call before giving up. These live at
+# httpx's transport layer, below pydantic-ai's ModelAPIError, and so would
+# otherwise escape as a raw traceback. HTTP *status* errors (4xx/5xx) are not
+# retried here: pydantic-ai wraps those into ModelAPIError, and a bad model name
+# or rejected key is a configuration problem no retry will fix.
+_MAX_ATTEMPTS: int = 3
+# Seconds to wait before each retry; one entry per gap between attempts, so its
+# length is _MAX_ATTEMPTS - 1. Exponential so a brief blip clears quickly while a
+# longer wobble still gets a real pause.
+_RETRY_BACKOFF: tuple[float, ...] = (1.0, 4.0)
+
 
 class ModelRequestError(SnakesAndMiceError):
-    """The call to a model's provider failed for a reason that is not a game
-    fault — a misspelled or unavailable model, a rejected key, a rate limit, or a
-    network problem. It is an environment/configuration error, so it aborts the
-    run with a clear message rather than ending a game against the player."""
+    """The call to a model's provider failed for a reason that no retry fixes and
+    that is not a game fault — a misspelled or unavailable model, a rejected key,
+    or a capability mismatch. It is an environment/configuration error, broken for
+    every game rather than one, so it does *not* end a single game: it propagates
+    past :func:`~snakes_and_mice.game.play_game` and
+    :func:`~snakes_and_mice.match.play_match` uncaught, up to the entry point,
+    which catches it and reports one clear message (see :func:`..cli.main`).
+
+    Contrast the two conditions the engine *does* turn into a
+    :class:`~snakes_and_mice.result.GameResult`: :class:`MoveUnavailable` (a
+    fault) and :class:`PlayerUnavailable` (a transient transport failure that
+    outlasted its retries — a no-contest abort, not run-fatal)."""
 
 
 class LLMMove(BaseModel):
@@ -110,47 +133,68 @@ class LLMPlayer(Player):
         user_prompt: str = "\n\n".join(self._pending)
         self._pending = []
 
-        # capture_run_messages records the exchange even when the run raises, so
-        # a response that fails validation is still available to us here — see the
-        # UnexpectedModelBehavior handler. It captures only the first run within
-        # its scope, which is exactly the one run we make per choose_move.
-        with capture_run_messages() as captured:
-            try:
-                result = self._agent.run_sync(
-                    user_prompt, message_history=self._history
-                )
-            except UnexpectedModelBehavior as exc:
-                # The model produced no usable move; with no retries that ends the
-                # game. Persist the exchange first — including the response captured
-                # above — so it reaches the log for debugging and stays in the
-                # thread, letting the next game's fault feedback point at what
-                # actually happened rather than at nothing. A response truncated at
-                # the output-token limit (finish_reason "length", e.g. thinking that
-                # ran to the cap) is a distinct fault from genuinely malformed
-                # output, and gets its own feedback (think more briefly).
-                self._history = list(captured)
-                self._write_log()
-                reason: PlayerFaultReason = (
-                    PlayerFaultReason.THINKING_LIMIT_EXCEEDED
-                    if self._hit_token_limit(captured)
-                    else PlayerFaultReason.UNPARSEABLE_OUTPUT
-                )
-                raise MoveUnavailable(reason, str(exc)) from exc
-            except (ModelAPIError, UserError) as exc:
-                # The provider call could not be made or failed: a bad model name, a
-                # rejected key, a rate limit, a network error (ModelAPIError), or a
-                # model/capability mismatch caught client-side before any request
-                # (UserError — e.g. an unknown Anthropic model rejecting native
-                # output). None of these is a game fault, so surface a clear message
-                # instead of letting a raw traceback escape.
-                raise ModelRequestError(self._describe_backend_error(exc)) from exc
+        # A transient transport failure is retried (see _MAX_ATTEMPTS); every
+        # other outcome resolves on the first attempt, returning or raising below.
+        for attempt in range(_MAX_ATTEMPTS):
+            # capture_run_messages records the exchange even when the run raises,
+            # so a response that fails validation is still available to us here —
+            # see the UnexpectedModelBehavior handler. It captures only the first
+            # run within its scope; a fresh scope per attempt keeps each retry's
+            # exchange separate.
+            with capture_run_messages() as captured:
+                try:
+                    result = self._agent.run_sync(
+                        user_prompt, message_history=self._history
+                    )
+                except UnexpectedModelBehavior as exc:
+                    # The model produced no usable move; with no retries that ends
+                    # the game. Persist the exchange first — including the response
+                    # captured above — so it reaches the log for debugging and
+                    # stays in the thread, letting the next game's fault feedback
+                    # point at what actually happened rather than at nothing. A
+                    # response truncated at the output-token limit (finish_reason
+                    # "length", e.g. thinking that ran to the cap) is a distinct
+                    # fault from genuinely malformed output, and gets its own
+                    # feedback (think more briefly).
+                    self._history = list(captured)
+                    self._write_log()
+                    reason: PlayerFaultReason = (
+                        PlayerFaultReason.THINKING_LIMIT_EXCEEDED
+                        if self._hit_token_limit(captured)
+                        else PlayerFaultReason.UNPARSEABLE_OUTPUT
+                    )
+                    raise MoveUnavailable(reason, str(exc)) from exc
+                except (ModelAPIError, UserError) as exc:
+                    # The provider call failed for a reason no retry fixes: a bad
+                    # model name, a rejected key (ModelAPIError/ModelHTTPError), or
+                    # a model/capability mismatch caught client-side before any
+                    # request (UserError — e.g. an unknown Anthropic model
+                    # rejecting native output). A configuration problem, not a
+                    # transient one, so it aborts the run with a clear message
+                    # instead of letting a raw traceback escape.
+                    raise ModelRequestError(self._describe_backend_error(exc)) from exc
+                except httpx.TransportError as exc:
+                    # A transport-level failure (timeout, dropped connection): not
+                    # the model's doing. Retry a few times with backoff, then give
+                    # up and let the engine void the game as a no-contest — never
+                    # charging the player and never aborting the whole match.
+                    if attempt + 1 < _MAX_ATTEMPTS:
+                        time.sleep(_RETRY_BACKOFF[attempt])
+                        continue
+                    if captured:
+                        self._history = list(captured)
+                    self._write_log()
+                    raise PlayerUnavailable(self._describe_unreachable(exc)) from exc
 
-        self._history = list(result.all_messages())
-        self._write_log()
+            self._history = list(result.all_messages())
+            self._write_log()
 
-        output: LLMMove = result.output
-        move: Move = self._parse_move(output.cells)
-        return MoveChoice(move, output.claimed_outcome)
+            output: LLMMove = result.output
+            move: Move = self._parse_move(output.cells)
+            return MoveChoice(move, output.claimed_outcome)
+
+        # Unreachable: the final attempt either returns or raises above.
+        raise AssertionError("choose_move exhausted its retries without resolving")
 
     def end_game(self, result: GameResult) -> None:
         # Composed now, sent only if there is a next game: it stays queued and is
@@ -178,6 +222,16 @@ class LLMPlayer(Player):
         failed run; the model's response, if any, is the last of them."""
         last: ModelMessage | None = messages[-1] if messages else None
         return isinstance(last, ModelResponse) and last.finish_reason == "length"
+
+    def _describe_unreachable(self, exc: httpx.TransportError) -> str:
+        """A short message for a transport failure that outlasted every retry
+        (see :class:`PlayerUnavailable`). It names the player and the failure kind
+        so a voided game is explicable, and carries the class name rather than the
+        message because bare timeouts often stringify to nothing."""
+        return (
+            f"player {self.name!r} could not reach its model "
+            f"({type(exc).__name__}) after {_MAX_ATTEMPTS} attempts"
+        )
 
     def _describe_backend_error(self, exc: ModelAPIError | UserError) -> str:
         """A short, actionable message for a failed provider call (see
@@ -229,6 +283,14 @@ class LLMPlayer(Player):
             return (
                 "That game is over: every line is dead, so it was a cat's game "
                 "(a draw)."
+            )
+        if result.termination is Termination.ABORTED:
+            # A no-contest: a technical problem, not the model's play, voided the
+            # game. Say so plainly and give no fault advice — there is nothing for
+            # the model to do differently.
+            return (
+                "That game was abandoned because of a technical problem reaching "
+                "you, not anything about your play — it does not count."
             )
 
         fault: PlayerFaultDetail | None = result.fault

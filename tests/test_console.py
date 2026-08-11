@@ -105,6 +105,7 @@ def test_match_summary_breaks_down_faults_by_side_and_type() -> None:
         mouse_faults=3,
         snake_faults=1,
         faults=faults,
+        aborted=0,
     )
 
     summary: str = describe_match_result(result)
@@ -125,6 +126,7 @@ def test_match_summary_omits_fault_breakdown_when_clean() -> None:
         mouse_faults=0,
         snake_faults=0,
         faults=[],
+        aborted=0,
     )
 
     summary: str = describe_match_result(result)

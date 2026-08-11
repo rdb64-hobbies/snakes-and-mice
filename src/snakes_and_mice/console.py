@@ -58,6 +58,11 @@ def describe_game_result(result: GameResult, players: dict[Side, str]) -> str:
         return f"{players[result.winner]} ({result.winner.value}) wins."
     if result.termination is Termination.CATS_GAME:
         return "Cat's game — a draw."
+    if result.termination is Termination.ABORTED:
+        abort: str = "Game abandoned (no contest)"
+        if result.error is not None:
+            abort += f": {result.error}"
+        return abort
     fault: PlayerFaultDetail | None = result.fault
     assert fault is not None
     detail: str = f"{players[fault.offender]} ({fault.offender.value}) faulted: {fault.reason.value}"
@@ -95,6 +100,10 @@ def describe_match_result(result: MatchResult) -> str:
             breakdown: str = _fault_breakdown(result.faults, side)
             if breakdown:
                 lines.append(f"    {GLYPH[side]} {side.value}: {breakdown}")
+    if result.aborted:
+        # A no-contest tally, shown only when it happened: these games belong to
+        # neither player, so they sit apart from the wins and faults above.
+        lines.append(f"  Abandoned (no contest): {result.aborted}")
     return "\n".join(lines)
 
 

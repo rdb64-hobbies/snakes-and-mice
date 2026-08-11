@@ -13,6 +13,8 @@ from snakes_and_mice import (
     Move,
     MoveChoice,
     Observer,
+    Player,
+    PlayerUnavailable,
     RandomPlayer,
     ScriptedPlayer,
     Side,
@@ -77,7 +79,7 @@ def test_match_tallies_faults_and_keeps_faulted_games() -> None:
 
 
 def test_match_result_invariants_hold() -> None:
-    # Random players never fault, and the five tallies always partition the games.
+    # Random players never fault, and the tallies always partition the games.
     mouse = RandomPlayer("Mouse", random.Random(1))
     snake = RandomPlayer("Snake", random.Random(2))
     result = play_match(mouse, snake, 20)
@@ -88,10 +90,48 @@ def test_match_result_invariants_hold() -> None:
         + result.cats_games
         + result.mouse_faults
         + result.snake_faults
+        + result.aborted
         == result.num_games
         == 20
     )
     assert result.mouse_faults + result.snake_faults == len(result.faults) == 0
+    assert result.aborted == 0
+
+
+class _UnreachablePlayer(Player):
+    """A player whose backend is unreachable every turn — never a fault."""
+
+    def start_game(self, side: Side) -> None:
+        return None
+
+    def observe_move(self, side: Side, move: Move) -> None:
+        return None
+
+    def choose_move(self) -> MoveChoice:
+        raise PlayerUnavailable("model unreachable after retries")
+
+
+def test_match_tallies_aborted_games_as_no_contest() -> None:
+    # Every game is voided by an unreachable player: counted as aborted, charged
+    # to neither side, and kept out of the fault list. The partition still holds.
+    mouse = _UnreachablePlayer(name="Mouse")
+    snake = ScriptedPlayer([], name="Snake")
+    result = play_match(mouse, snake, 3)
+
+    assert result.aborted == 3
+    assert result.mouse_faults == result.snake_faults == 0
+    assert result.faults == []
+    assert result.mouse_wins == result.snake_wins == result.cats_games == 0
+    assert (
+        result.mouse_wins
+        + result.snake_wins
+        + result.cats_games
+        + result.mouse_faults
+        + result.snake_faults
+        + result.aborted
+        == result.num_games
+        == 3
+    )
 
 
 def test_match_requires_at_least_one_game() -> None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
 from pydantic_ai.exceptions import ModelHTTPError
@@ -30,6 +31,7 @@ from snakes_and_mice import (
     MoveUnavailable,
     PlayerFaultDetail,
     PlayerFaultReason,
+    PlayerUnavailable,
     Side,
     Termination,
     TurnOutcome,
@@ -111,6 +113,24 @@ def _truncated_agent() -> Agent[None, LLMMove]:
             parts=[ThinkingPart(content="still reasoning when the budget ran out")],
             finish_reason="length",
         )
+
+    return Agent(
+        model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
+    )
+
+
+def _timeout_then_move_agent(
+    timeouts: int, move: dict[str, object]
+) -> Agent[None, LLMMove]:
+    """An agent that raises a transport timeout on its first ``timeouts`` calls,
+    then returns ``move`` — used to exercise the retry path in choose_move."""
+    state: dict[str, int] = {"calls": 0}
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        state["calls"] += 1
+        if state["calls"] <= timeouts:
+            raise httpx.ReadTimeout("timed out")
+        return ModelResponse(parts=[TextPart(content=json.dumps(move))])
 
     return Agent(
         model=FunctionModel(respond), output_type=NativeOutput(LLMMove), retries=0
@@ -205,6 +225,46 @@ def test_token_limit_truncation_is_a_distinct_fault(tmp_path: Path) -> None:
     assert excinfo.value.reason is PlayerFaultReason.THINKING_LIMIT_EXCEEDED
 
     assert player._history and isinstance(player._history[-1], ModelResponse)
+    assert (log_dir / "bot-mouse.json").exists()
+
+
+def test_transient_timeout_is_retried_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A transport timeout is not the model's doing: the call is retried, and a
+    # move that arrives on a later attempt is returned normally. Backoff sleeps
+    # are stubbed so the test does not actually wait.
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    player: LLMPlayer = LLMPlayer(
+        _timeout_then_move_agent(2, _move(["A1", "A2"], "in_play"))
+    )
+    player.start_game(Side.MOUSE)
+
+    choice = player.choose_move()
+
+    assert str(choice.move) == "A1 A2"
+    assert choice.claimed_outcome is TurnOutcome.IN_PLAY
+
+
+def test_unreachable_model_raises_player_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # When every attempt times out, the player gives up with PlayerUnavailable
+    # (not a fault, not a run-aborting ModelRequestError). The thread so far is
+    # still logged for debugging.
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    log_dir: Path = tmp_path / "logs"
+    # More timeouts than the player will ever attempt: it always fails.
+    player: LLMPlayer = LLMPlayer(
+        _timeout_then_move_agent(99, _move(["A1", "A2"])),
+        name="bot",
+        log_dir=log_dir,
+    )
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(PlayerUnavailable) as excinfo:
+        player.choose_move()
+    assert "bot" in str(excinfo.value)
     assert (log_dir / "bot-mouse.json").exists()
 
 

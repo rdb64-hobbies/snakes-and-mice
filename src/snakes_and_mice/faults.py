@@ -72,3 +72,17 @@ class MoveUnavailable(SnakesAndMiceError):
     def __init__(self, reason: PlayerFaultReason, message: str | None = None) -> None:
         self.reason: PlayerFaultReason = reason
         super().__init__(message or reason.name)
+
+
+class PlayerUnavailable(SnakesAndMiceError):
+    """A player could not take its turn for a reason that is *not its fault* —
+    typically an LLM whose model backend stayed unreachable (a network timeout or
+    dropped connection) even after retries.
+
+    This is deliberately **not** a fault: nothing the player did was wrong, so it
+    is not charged against it. The engine catches it and ends the game as a
+    no-contest (``Termination.ABORTED``), leaving the rest of the match to play
+    on. Contrast :class:`MoveUnavailable`, which *is* a fault (the player produced
+    no usable move), and provider errors that abort the whole run (a bad model
+    name or rejected key — a configuration problem, not a transient one).
+    """

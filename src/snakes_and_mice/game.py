@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from .board import Board
 from .core import Move, MoveChoice, Side, TurnOutcome
-from .faults import IllegalMove, MoveUnavailable, PlayerFaultReason
+from .faults import (
+    IllegalMove,
+    MoveUnavailable,
+    PlayerFaultReason,
+    PlayerUnavailable,
+)
 from .observer import Observer
 from .players.base import Player
 from .result import GameResult, PlayerFaultDetail, Termination
@@ -20,11 +25,18 @@ def play_game(
 ) -> GameResult:
     """Play one game between ``mouse`` and ``snake``; return the result.
 
-    ``mouse`` moves first. Every termination — win, cat's game, or fault — is
-    reported to both players via ``end_game`` before this returns. An optional
-    :class:`Observer` is driven in lockstep: the engine fires every hook it has,
-    in order, and leaves it to the observer to decide (from its
+    ``mouse`` moves first. Every termination — win, cat's game, fault, or a
+    no-contest abort — is reported to both players via ``end_game`` before this
+    returns. An optional :class:`Observer` is driven in lockstep: the engine fires
+    every hook it has, in order, and leaves it to the observer to decide (from its
     :class:`~snakes_and_mice.observer.ObservationLevel`) how much to act on.
+
+    Not every failure becomes a result. Only a player's ``MoveUnavailable`` (a
+    fault) and ``PlayerUnavailable`` (a no-contest abort) are turned into a
+    :class:`~snakes_and_mice.result.GameResult`. A provider/configuration error —
+    e.g. an LLM player's ``ModelRequestError`` — is not caught here and propagates
+    to the caller, which is expected to handle it once (as the CLI does), because
+    it is broken for the whole run rather than for this one game.
     """
     board: Board = Board()
     players: dict[Side, Player] = {Side.MOUSE: mouse, Side.SNAKE: snake}
@@ -45,6 +57,24 @@ def play_game(
             choice: MoveChoice = player.choose_move()
         except MoveUnavailable as exc:
             return _finish(players, _fault(to_move, exc.reason), observer)
+        except PlayerUnavailable as exc:
+            # Not a fault: an environmental failure (e.g. an unreachable model)
+            # voided this game. End it as a no-contest and let the match go on.
+            return _finish(
+                players,
+                GameResult(Termination.ABORTED, error=str(exc)),
+                observer,
+            )
+        # Anything else is intentionally NOT caught here. In particular a
+        # provider/configuration failure — a bad model name or rejected key, which
+        # the LLM player raises as ModelRequestError — is broken for every game in
+        # the match, not just this one. Converting it to a game result would bury a
+        # setup error under a run full of meaningless outcomes, so it propagates
+        # past this loop (and past play_match) to the entry point, which reports it
+        # once and stops the whole run (see cli.main). The engine only turns the
+        # two conditions above — which are genuinely about *this* game — into
+        # results; it stays ignorant of any specific player type, so it does not
+        # (and must not) import that error to name it here.
 
         try:
             actual_outcome: TurnOutcome = _apply_and_evaluate(

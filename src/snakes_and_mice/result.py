@@ -20,6 +20,9 @@ class Termination(Enum):
     LINE_COMPLETED = "line_completed"  # a player completed a line — normal win
     CATS_GAME = "cats_game"  # every line dead — a draw, no winner
     PLAYER_FAULT = "player_fault"  # a player failed a turn — error, no winner
+    ABORTED = "aborted"  # a no-contest: an environmental failure (e.g. the model
+    # backend stayed unreachable after retries) voided the game. Not scored to
+    # either side and not a fault; the rest of the match plays on.
 
 
 @dataclass(frozen=True)
@@ -44,8 +47,9 @@ class GameResult:
     """The outcome of a game."""
 
     termination: Termination
-    winner: Side | None = None  # None for both CATS_GAME and PLAYER_FAULT
+    winner: Side | None = None  # set iff termination == LINE_COMPLETED
     fault: PlayerFaultDetail | None = None  # set iff termination == PLAYER_FAULT
+    error: str | None = None  # a short cause description, set iff ABORTED
 
 
 @dataclass(frozen=True)
@@ -53,11 +57,12 @@ class MatchResult:
     """The outcome of a match: two fixed players over a sequence of games.
 
     The tallies partition the games: every game is a mouse win, a snake win, a
-    cat's game, or a fault charged to exactly one side — so
-    ``mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults ==
-    num_games``. Only faulted games keep their full :class:`GameResult` (in
-    :attr:`faults`, with the fault detail); the rest are captured by the counts
-    alone, hence ``mouse_faults + snake_faults == len(faults)``.
+    cat's game, a fault charged to exactly one side, or a no-contest abort — so
+    ``mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults +
+    aborted == num_games``. Only faulted games keep their full :class:`GameResult`
+    (in :attr:`faults`, with the fault detail); the rest are captured by the
+    counts alone, hence ``mouse_faults + snake_faults == len(faults)``. Aborted
+    games are counted but not otherwise recorded: they belong to neither player.
     """
 
     names: dict[Side, str]  # who played each side, fixed for the whole match
@@ -68,3 +73,4 @@ class MatchResult:
     mouse_faults: int  # games the Mouse-side player faulted
     snake_faults: int  # games the Snake-side player faulted
     faults: list[GameResult]  # the faulted games' full results
+    aborted: int  # no-contest games (ABORTED) — charged to neither side

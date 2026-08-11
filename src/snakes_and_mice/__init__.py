@@ -13,6 +13,7 @@ from .faults import (
     IllegalMove,
     MoveUnavailable,
     PlayerFaultReason,
+    PlayerUnavailable,
     SnakesAndMiceError,
 )
 from .game import play_game
@@ -46,6 +47,7 @@ __all__ = [
     "Player",
     "PlayerFaultDetail",
     "PlayerFaultReason",
+    "PlayerUnavailable",
     "RandomPlayer",
     "ScriptedPlayer",
     "Side",

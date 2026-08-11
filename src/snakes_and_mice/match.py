@@ -30,6 +30,11 @@ def play_match(
     of every game's outcome. An optional :class:`Observer` is driven in lockstep:
     the match boundaries and every game's events are fired to it, and it decides
     (from its :class:`~snakes_and_mice.observer.ObservationLevel`) what to show.
+
+    Like :func:`~snakes_and_mice.game.play_game`, this does not catch
+    provider/configuration errors: an LLM player's ``ModelRequestError`` flies
+    straight through the match loop to the caller, since a broken model name or
+    key dooms every game, not one. The caller (the CLI) reports it once and stops.
     """
     if num_games < 1:
         raise ValueError(f"a match needs at least one game, got {num_games}")
@@ -43,6 +48,7 @@ def play_match(
     cats_games: int = 0
     mouse_faults: int = 0
     snake_faults: int = 0
+    aborted: int = 0
     faults: list[GameResult] = []
 
     for _ in range(num_games):
@@ -55,6 +61,8 @@ def play_match(
                 snake_wins += 1
         elif result.termination is Termination.CATS_GAME:
             cats_games += 1
+        elif result.termination is Termination.ABORTED:
+            aborted += 1  # no-contest: charged to neither side
         else:  # PLAYER_FAULT
             assert result.fault is not None
             faults.append(result)
@@ -72,6 +80,7 @@ def play_match(
         mouse_faults=mouse_faults,
         snake_faults=snake_faults,
         faults=faults,
+        aborted=aborted,
     )
     if observer is not None:
         observer.on_match_end(match_result)

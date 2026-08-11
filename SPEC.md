@@ -356,6 +356,9 @@ class Termination(Enum):
     LINE_COMPLETED   # a player completed a line — normal win
     CATS_GAME        # all 12 lines dead — draw, no winner
     PLAYER_FAULT     # a player failed to complete a valid turn — error, no winner
+    ABORTED          # no-contest: an environmental failure (e.g. the model backend
+                     # stayed unreachable after retries) voided the game. Not a
+                     # fault, not scored to either side; the rest of the match plays on.
 
 class PlayerFaultReason(Enum):
     # Structural (caught at Cell/Move construction). For trusted players this
@@ -378,7 +381,8 @@ class PlayerFaultReason(Enum):
                        # emitting a move (typically thinking up to the limit); no
                        # move was produced, distinct from garbage output
     # (The LLM sub-spec may refine or add player-reported reasons, e.g. empty
-    # response, refusal, or timeout.)
+    # response or refusal. A transport timeout is NOT a fault — it is a no-contest
+    # abort, see Termination.ABORTED above and §11.)
     # Engine-detected misread: the move is legal, but the player's self-assessed
     # outcome disagrees with the true outcome. `attempted_move` is present, and
     # `claimed_outcome`/`actual_outcome` below are set.
@@ -395,15 +399,21 @@ class PlayerFaultDetail:
 @dataclass(frozen=True)
 class GameResult:
     termination: Termination
-    winner: Side | None            # None for both CATS_GAME and PLAYER_FAULT
+    winner: Side | None            # set iff termination == LINE_COMPLETED
     fault: PlayerFaultDetail | None   # set iff termination == PLAYER_FAULT
+    error: str | None = None          # a short cause description, set iff ABORTED
 ```
 
 Notes:
 
-- `winner` is `None` for **both** a cat's game and a player fault; the two are
-  distinguished by `termination`. A player fault is **not** a win for the
-  opponent.
+- `winner` is `None` for a cat's game, a player fault, **and** an abort; the
+  cases are distinguished by `termination`. A player fault is **not** a win for
+  the opponent.
+- **`ABORTED` is a no-contest, not a fault.** It is reserved for failures that
+  are nobody's play — the canonical case being a player's model backend staying
+  unreachable after retries (surfaced as `PlayerUnavailable`, §11). Such a game
+  is charged to neither side and never appears in the fault tallies; only the
+  affected game ends, and the match continues.
 - **`PLAYER_FAULT` covers several kinds of the same underlying failure** — "the
   player did not complete a valid turn":
   - *Structural, construction-time* (`OFF_BOARD`, `DUPLICATE_CELLS`, and
@@ -600,10 +610,13 @@ delivered to the model as feedback in the *next* game's opening messages, not
 mid-game. This makes "does the model play legal, well-assessed moves" a scored
 property of the benchmark rather than something the harness papers over.
 
-(Transient *API* failures — network errors, rate limits — are a separate, operational
-concern, not a player fault; the player may lean on Pydantic AI's own request
-retries. Handling an ultimately-unrecoverable API failure gracefully is left to the
-implementation.)
+(Transient *transport* failures — read/connect timeouts, dropped connections — are a
+separate, operational concern, not a player fault. The LLM player retries the call a
+few times with exponential backoff; if the backend stays unreachable it raises
+`PlayerUnavailable`, and the engine ends that game as a no-contest (`ABORTED`, §10)
+without charging the player or aborting the match. This is distinct from a
+*configuration* failure — a misspelled/unavailable model, a rejected key — which no
+retry fixes and which aborts the whole run with a clear message, not a game outcome.)
 
 ### Model selection
 
@@ -770,14 +783,16 @@ class MatchResult:
     mouse_faults: int          # games the Mouse-side player faulted
     snake_faults: int          # games the Snake-side player faulted
     faults: list[GameResult]   # the faulted games' full results (with PlayerFaultDetail)
+    aborted: int               # no-contest games (ABORTED) — charged to neither side
 ```
 
 The tallies summarize the match; full per-game `GameResult`s are kept **only for
 games that faulted** — the interesting failures, where a player made an illegal move
-or misread an outcome — each carrying its `PlayerFaultDetail`. By construction
-`mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults == num_games`,
-and `mouse_faults + snake_faults == len(faults)`. Richer scoring and standings belong
-to tournaments and are deferred.
+or misread an outcome — each carrying its `PlayerFaultDetail`. Aborted games are
+counted but not otherwise recorded: they belong to neither player. By construction
+`mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults + aborted ==
+num_games`, and `mouse_faults + snake_faults == len(faults)`. Richer scoring and
+standings belong to tournaments and are deferred.
 
 ### Observation levels
 

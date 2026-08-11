@@ -11,6 +11,7 @@ from snakes_and_mice import (
     MoveUnavailable,
     Player,
     PlayerFaultReason,
+    PlayerUnavailable,
     ScriptedPlayer,
     Side,
     Termination,
@@ -51,6 +52,20 @@ class SilentPlayer(Player):
 
     def choose_move(self) -> MoveChoice:
         raise MoveUnavailable(PlayerFaultReason.UNPARSEABLE_OUTPUT, "no output")
+
+
+class UnreachablePlayer(Player):
+    """A player whose backend is unreachable — it can never take a turn, but
+    through no fault of its own (see :class:`PlayerUnavailable`)."""
+
+    def start_game(self, side: Side) -> None:
+        return None
+
+    def observe_move(self, side: Side, move: Move) -> None:
+        return None
+
+    def choose_move(self) -> MoveChoice:
+        raise PlayerUnavailable("model unreachable after retries")
 
 
 def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
@@ -205,6 +220,20 @@ def test_move_unavailable_is_a_fault() -> None:
     assert result.fault.offender is Side.MOUSE
     assert result.fault.reason is PlayerFaultReason.UNPARSEABLE_OUTPUT
     assert result.fault.attempted_move is None
+
+
+def test_unreachable_player_ends_game_as_no_contest() -> None:
+    # A PlayerUnavailable is not a fault: the game ends ABORTED (no winner, no
+    # fault), it carries the cause, and both players are still notified.
+    mouse = UnreachablePlayer(name="Mouse")
+    snake = RecordingPlayer([], name="Snake")
+    result = play_game(mouse, snake)
+    assert result.termination is Termination.ABORTED
+    assert result.winner is None
+    assert result.fault is None
+    assert result.error == "model unreachable after retries"
+    # end_game still fires for both sides, so a learning player sees the outcome.
+    assert snake.result is result
 
 
 def test_game_ends_in_cats_game() -> None:
