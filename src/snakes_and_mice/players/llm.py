@@ -21,7 +21,6 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import httpx
 from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
@@ -29,7 +28,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     capture_run_messages,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 
 from ..core import Move, MoveChoice, Side, TurnOutcome
@@ -44,17 +43,30 @@ from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
 from .prompts import FAULT_ADVICE, RULES_PREAMBLE
 
-# Transient transport failures (read/connect timeouts, dropped connections) are
-# not the model's doing, so we retry the call before giving up. These live at
-# httpx's transport layer, below pydantic-ai's ModelAPIError, and so would
-# otherwise escape as a raw traceback. HTTP *status* errors (4xx/5xx) are not
-# retried here: pydantic-ai wraps those into ModelAPIError, and a bad model name
-# or rejected key is a configuration problem no retry will fix.
+# Some failures of a provider call are operational — neither the model's play nor
+# a configuration error: a dropped connection or timeout, a rate-limit or server
+# (5xx) error, or a malformed/truncated response body. All are worth retrying, so
+# choose_move retries a few times with exponential backoff before giving up and
+# voiding the game as a no-contest. They reach us in different shapes across
+# providers — a raw httpx error (Gemini's SDK), a bare ModelAPIError wrapping one
+# (the OpenAI/Anthropic SDKs), an HTTP-status ModelHTTPError, or a raw
+# json.JSONDecodeError from the HTTP layer — so choose_move classifies them by
+# *behavior* rather than by exception type.
 _MAX_ATTEMPTS: int = 3
 # Seconds to wait before each retry; one entry per gap between attempts, so its
 # length is _MAX_ATTEMPTS - 1. Exponential so a brief blip clears quickly while a
 # longer wobble still gets a real pause.
 _RETRY_BACKOFF: tuple[float, ...] = (1.0, 4.0)
+
+# HTTP statuses worth retrying: a request timeout (408), a rate-limit (429), or
+# any server error (5xx). Other 4xx are client/config problems no retry fixes.
+_TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 429})
+
+
+def _is_transient_status(status_code: int) -> bool:
+    """Whether an HTTP status from the provider is worth retrying (see
+    :data:`_TRANSIENT_STATUS_CODES`)."""
+    return status_code in _TRANSIENT_STATUS_CODES or status_code >= 500
 
 
 class ModelRequestError(SnakesAndMiceError):
@@ -133,7 +145,7 @@ class LLMPlayer(Player):
         user_prompt: str = "\n\n".join(self._pending)
         self._pending = []
 
-        # A transient transport failure is retried (see _MAX_ATTEMPTS); every
+        # A transient operational failure is retried (see _MAX_ATTEMPTS); every
         # other outcome resolves on the first attempt, returning or raising below.
         for attempt in range(_MAX_ATTEMPTS):
             # capture_run_messages records the exchange even when the run raises,
@@ -148,9 +160,9 @@ class LLMPlayer(Player):
                     )
                 except UnexpectedModelBehavior as exc:
                     # The model produced no usable move; with no retries that ends
-                    # the game. Persist the exchange first — including the response
-                    # captured above — so it reaches the log for debugging and
-                    # stays in the thread, letting the next game's fault feedback
+                    # the game as a fault. Persist the exchange first — including the
+                    # response captured above — so it reaches the log for debugging
+                    # and stays in the thread, letting the next game's fault feedback
                     # point at what actually happened rather than at nothing. A
                     # response truncated at the output-token limit (finish_reason
                     # "length", e.g. thinking that ran to the cap) is a distinct
@@ -164,22 +176,31 @@ class LLMPlayer(Player):
                         else PlayerFaultReason.UNPARSEABLE_OUTPUT
                     )
                     raise MoveUnavailable(reason, str(exc)) from exc
-                except (ModelAPIError, UserError) as exc:
-                    # The provider call failed for a reason no retry fixes: a bad
-                    # model name, a rejected key (ModelAPIError/ModelHTTPError), or
-                    # a model/capability mismatch caught client-side before any
-                    # request (UserError — e.g. an unknown Anthropic model
-                    # rejecting native output). A configuration problem, not a
-                    # transient one, so it aborts the run with a clear message
-                    # instead of letting a raw traceback escape.
-                    raise ModelRequestError(self._describe_backend_error(exc)) from exc
-                except httpx.TransportError as exc:
-                    # A transport-level failure (timeout, dropped connection): not
-                    # the model's doing. Retry a few times with backoff, then give
-                    # up and let the engine void the game as a no-contest — never
-                    # charging the player and never aborting the whole match.
-                    if attempt + 1 < _MAX_ATTEMPTS:
-                        time.sleep(_RETRY_BACKOFF[attempt])
+                except Exception as exc:
+                    # Any other failure from the provider call, split two ways by
+                    # *behavior* — because pydantic-ai and the provider SDKs surface
+                    # the same underlying condition in different exception shapes:
+                    #
+                    #  - A configuration error no retry can fix — a rejected key, an
+                    #    unknown/unavailable model, a capability mismatch (UserError),
+                    #    or any non-transient HTTP status — is broken for every game,
+                    #    so it aborts the whole run with one clear message
+                    #    (ModelRequestError), not a per-game outcome.
+                    #  - Everything else is operational and transient: a connection
+                    #    drop or timeout (a raw httpx error from Gemini's SDK, or a
+                    #    bare ModelAPIError wrapping one from the OpenAI/Anthropic
+                    #    SDKs), a rate-limit or 5xx, or a malformed/truncated response
+                    #    body (a raw json.JSONDecodeError from the HTTP layer, seen
+                    #    from flaky gateways). None is the model's play and none is a
+                    #    config problem, so we retry with backoff and, if it persists,
+                    #    void just this game as a no-contest (PlayerUnavailable ->
+                    #    ABORTED) — never charging the player, never aborting the
+                    #    match, and never letting a raw traceback escape.
+                    if self._is_config_fatal(exc):
+                        raise ModelRequestError(
+                            self._describe_backend_error(exc)
+                        ) from exc
+                    if self._backoff_and_retry(attempt):
                         continue
                     if captured:
                         self._history = list(captured)
@@ -223,19 +244,42 @@ class LLMPlayer(Player):
         last: ModelMessage | None = messages[-1] if messages else None
         return isinstance(last, ModelResponse) and last.finish_reason == "length"
 
-    def _describe_unreachable(self, exc: httpx.TransportError) -> str:
-        """A short message for a transport failure that outlasted every retry
-        (see :class:`PlayerUnavailable`). It names the player and the failure kind
-        so a voided game is explicable, and carries the class name rather than the
-        message because bare timeouts often stringify to nothing."""
+    @staticmethod
+    def _is_config_fatal(exc: Exception) -> bool:
+        """Whether ``exc`` from the provider call is a configuration error that no
+        retry can fix — a rejected key, an unknown/unavailable model, a capability
+        mismatch (``UserError``), or any non-transient HTTP status. Such errors are
+        broken for every game and abort the whole run (:class:`ModelRequestError`);
+        everything else is treated as transient (see :meth:`choose_move`)."""
+        if isinstance(exc, UserError):
+            return True
+        if isinstance(exc, ModelHTTPError):
+            return not _is_transient_status(exc.status_code)
+        return False
+
+    @staticmethod
+    def _backoff_and_retry(attempt: int) -> bool:
+        """Sleep before the next attempt and report whether one remains. Returns
+        ``False`` on the final attempt (with no sleep), so the caller gives up."""
+        if attempt + 1 < _MAX_ATTEMPTS:
+            time.sleep(_RETRY_BACKOFF[attempt])
+            return True
+        return False
+
+    def _describe_unreachable(self, exc: Exception) -> str:
+        """A short message for an operational failure that outlasted every retry
+        (see :class:`PlayerUnavailable`): a connection drop or timeout, a rate-limit
+        or server error, or a malformed response body. It names the player and the
+        failure kind — the class name rather than the message, because bare timeouts
+        often stringify to nothing — so a voided game is explicable."""
         return (
-            f"player {self.name!r} could not reach its model "
+            f"player {self.name!r} could not complete a call to its model "
             f"({type(exc).__name__}) after {_MAX_ATTEMPTS} attempts"
         )
 
-    def _describe_backend_error(self, exc: ModelAPIError | UserError) -> str:
-        """A short, actionable message for a failed provider call (see
-        :class:`ModelRequestError`)."""
+    def _describe_backend_error(self, exc: Exception) -> str:
+        """A short, actionable message for a configuration error from the provider
+        call (see :class:`ModelRequestError` and :meth:`_is_config_fatal`)."""
         if isinstance(exc, ModelHTTPError):
             hint: str
             if exc.status_code == 404:
@@ -245,18 +289,15 @@ class LLMPlayer(Player):
                 )
             elif exc.status_code in (401, 403):
                 hint = "the provider rejected the API key — check it in your .env"
-            elif exc.status_code == 429:
-                hint = "the provider is rate-limiting — wait and try again"
             else:
-                hint = "check the model name in players.yaml and your provider setup"
+                hint = (
+                    "the request was rejected — the model may not support a required "
+                    "feature (structured output or thinking); check players.yaml and "
+                    "your provider setup"
+                )
             return (
                 f"player {self.name!r} could not use model {exc.model_name!r}: "
                 f"provider returned HTTP {exc.status_code} — {hint}"
-            )
-        if isinstance(exc, ModelAPIError):
-            return (
-                f"player {self.name!r} could not reach its model ({exc}); "
-                f"check your network and provider configuration"
             )
         # UserError: a client-side model/capability mismatch (e.g. an unknown
         # model name that the provider profile can't confirm supports the output

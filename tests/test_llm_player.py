@@ -15,7 +15,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -184,6 +184,61 @@ def test_provider_error_becomes_model_request_error() -> None:
     assert "opus" in message
     assert "bad-model" in message
     assert "404" in message
+
+
+@pytest.mark.parametrize("status", [400, 401, 403])
+def test_config_http_status_aborts_the_run(status: int) -> None:
+    # Non-transient 4xx statuses — a rejected key, a bad request the model can't
+    # satisfy — are configuration problems no retry fixes, so they abort the whole
+    # run with a ModelRequestError rather than ending a single game.
+    player: LLMPlayer = LLMPlayer(
+        _failing_agent(ModelHTTPError(status_code=status, model_name="m")), name="bot"
+    )
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(ModelRequestError):
+        player.choose_move()
+
+
+def test_user_error_aborts_the_run() -> None:
+    # A client-side capability mismatch (raised before any request) is a config
+    # problem, not a game outcome: it aborts the run with a clear message.
+    player: LLMPlayer = LLMPlayer(
+        _failing_agent(UserError("model does not support native output")), name="bot"
+    )
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(ModelRequestError):
+        player.choose_move()
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(
+            json.JSONDecodeError("Expecting value", "", 0), id="malformed-body"
+        ),
+        pytest.param(ModelAPIError(model_name="m", message="connection reset"), id="connection"),
+        pytest.param(ModelHTTPError(status_code=429, model_name="m"), id="rate-limit"),
+        pytest.param(ModelHTTPError(status_code=503, model_name="m"), id="server-error"),
+    ],
+)
+def test_operational_failures_are_transient_not_crashes(
+    monkeypatch: pytest.MonkeyPatch, exc: Exception
+) -> None:
+    # Operational failures reach us in different shapes — a raw json.JSONDecodeError
+    # from a truncated response body, a bare ModelAPIError wrapping a dropped
+    # connection, a 429 rate-limit, a 5xx server error. None is the model's play or
+    # a config error, so none may escape as a traceback: each is retried and, when
+    # it persists, voids just this game as a no-contest (PlayerUnavailable ->
+    # ABORTED), never a fault and never a run-aborting ModelRequestError.
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    player: LLMPlayer = LLMPlayer(_failing_agent(exc), name="bot")
+    player.start_game(Side.MOUSE)
+
+    with pytest.raises(PlayerUnavailable) as excinfo:
+        player.choose_move()
+    assert "bot" in str(excinfo.value)
 
 
 def test_unparseable_output_is_logged_and_kept_in_history(tmp_path: Path) -> None:
