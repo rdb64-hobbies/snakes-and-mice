@@ -12,7 +12,7 @@ environment, never in the tracked config files.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -20,6 +20,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 from pydantic_ai import Agent, NativeOutput
+from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.messages import ModelMessage, ModelResponse, ThinkingPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
@@ -184,6 +186,59 @@ def resolve_model(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> Model
     )
 
 
+def _is_bulk_reasoning(part: ThinkingPart) -> bool:
+    """Whether ``part`` is verbatim reasoning text safe to drop from a re-sent
+    history — as opposed to a linked reasoning *item* that must be kept.
+
+    The distinction is by shape, not provider, and the logs bear out three cases:
+
+    * Gemini emits its thought summary as plain text (hundreds–thousands of chars)
+      with no ``id`` or ``signature``. This is the payload worth stripping: it is
+      self-contained, so removing it leaves a valid history.
+    * OpenAI's Responses API and Anthropic emit an *empty-content* part carrying an
+      ``id`` and/or ``signature`` that a following item references. Stripping it
+      saves nothing (there is no text) and breaks the re-sent history — OpenAI
+      rejects the dangling reference with HTTP 400 — so it must be kept.
+
+    So strip only a part that has text *and* no provider id/signature."""
+    return bool(part.content) and part.id is None and part.signature is None
+
+
+def strip_prior_thinking(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Drop bulky reasoning text from earlier turns before each model request.
+
+    A single LLM player keeps one message thread spanning the whole match (§11), and
+    every provider re-sends that entire thread as input on each turn. A reasoning
+    model's own past chain-of-thought can dominate that payload — for Gemini, which
+    returns its full thought summary as text, it is the bulk of the accumulated input
+    tokens, growing super-linearly over a match and capping how many games fit — yet
+    it is not needed to keep playing: the board is fully reconstructible from the move
+    list, and the model reasons afresh (still at full effort) every turn. Stripping
+    that prior reasoning from what is *sent* cuts the context back to near-flat growth
+    without lowering the thinking level.
+
+    Only self-contained reasoning *text* is stripped (see :func:`_is_bulk_reasoning`);
+    linked reasoning items (OpenAI/Anthropic, carrying an id/signature) are left in
+    place — they cost nothing to keep and removing them would invalidate the history.
+
+    This is attached as a :class:`ProcessHistory` capability, so it rewrites only the
+    request payload; the agent's stored history — and thus the ``--log-llm`` dump —
+    keeps the full thinking for debugging.
+    """
+    stripped: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            kept = [
+                p
+                for p in message.parts
+                if not (isinstance(p, ThinkingPart) and _is_bulk_reasoning(p))
+            ]
+            if len(kept) != len(message.parts):
+                message = replace(message, parts=kept)
+        stripped.append(message)
+    return stripped
+
+
 def resolve_agent(
     spec: PlayerSpec,
     providers: dict[str, ProviderSpec],
@@ -196,21 +251,29 @@ def resolve_agent(
     then wrapped in an agent whose output mode fits the provider — native
     JSON-schema output where an output tool cannot coexist with thinking
     (Anthropic), the default tool-based output everywhere else. ``retries=0``
-    (both branches) enforces §11's "no re-prompting within a game".
+    (both branches) enforces §11's "no re-prompting within a game". Every agent
+    carries the :func:`strip_prior_thinking` history processor to keep a long
+    match's context from ballooning with re-sent past reasoning.
     """
     model: Model = resolve_model(spec, providers)
     settings: ModelSettings = ModelSettings(
         thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS
     )
+    capabilities: list[ProcessHistory[None]] = [ProcessHistory(strip_prior_thinking)]
     if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
         return Agent(
             model=model,
             output_type=NativeOutput(LLMMove),
             model_settings=settings,
             retries=0,
+            capabilities=capabilities,
         )
     return Agent(
-        model=model, output_type=LLMMove, model_settings=settings, retries=0
+        model=model,
+        output_type=LLMMove,
+        model_settings=settings,
+        retries=0,
+        capabilities=capabilities,
     )
 
 

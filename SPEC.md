@@ -602,6 +602,42 @@ the next user turn on the following `choose_move`.
   - if **the player itself faulted**, what it did wrong and how to avoid repeating it,
     composed from the fault detail (§10, "Whoever reports, reports only the facts").
 
+### Pruning re-sent reasoning from the request
+
+Because the thread spans the whole match and every provider re-sends the **entire**
+thread as input on each turn, a reasoning model's own accumulated chain-of-thought
+would otherwise dominate the payload — and grow super-linearly over a match, since
+each turn's reasoning is re-sent on every later turn. Left unchecked this both
+inflates cost and caps how many games fit before the thread outgrows the model's
+input budget. Yet that prior reasoning is not needed to keep playing: the board is
+fully reconstructible from the move list, and the model reasons afresh — still at the
+full effort level (see "Thinking / effort level") — every turn.
+
+So the player attaches a Pydantic AI **history processor** (the `ProcessHistory`
+capability) that strips bulky prior reasoning from what is **sent**, turn by turn,
+without lowering the thinking level. The rule is by **shape**, not by provider:
+
+- **Stripped:** self-contained reasoning *text* — thought content carried with no
+  provider `id` or `signature` (emitted by Gemini and by open-weight text-reasoning
+  models such as the gpt-oss / qwen / kimi families). Removing it leaves a valid
+  history, and it is where nearly all the savings are.
+- **Kept:** *linked* reasoning items — typically empty-content parts carrying an
+  `id`/`signature` that a later item references (OpenAI's Responses API, Anthropic).
+  Dropping them saves nothing (there is no text) and **invalidates** the re-sent
+  history — OpenAI rejects the dangling reference with an HTTP 400 — so they must
+  survive.
+
+The practical saving is largest for models whose entire re-sent reasoning is that
+self-contained text; for Gemini it is smaller, because its cross-turn reasoning also
+rides on a mandatory, opaque `thought_signature` attached to the tool-call part, which
+the wire must retain for multi-turn tool calling and so is never stripped.
+
+This is a **wire-only** transform: it rewrites only the request payload. The player's
+stored thread — and therefore the `--log-llm` dump (see "Message logging") — keeps the
+full reasoning of every turn for debugging, and the *current* turn's thinking is never
+touched (only prior turns are pruned, and only in what is sent). It never changes which
+moves are legal or how faults are scored.
+
 ### No retries
 
 An illegal or unusable move **ends the game** — no retries, no re-prompting within a
@@ -713,16 +749,21 @@ deliberately deferred.
 Because the benchmark turns on *how a model reasons*, it helps to be able to read
 the exact conversation a player had with its model. A debugging option captures
 that: with the CLI flag **`--log-llm [DIR]`** (off by default; `DIR` defaults to a
-git-ignored `llm-logs/`), each LLM player writes the **full raw message thread** —
-everything sent to and received from the model — as JSON under `DIR`.
+git-ignored `llm-logs/`), each LLM player writes the **full message thread** — the
+whole conversation with the model, keeping each turn's complete reasoning even where
+later requests prune it (see "Pruning re-sent reasoning") — as JSON under `DIR`.
 
-- **The complete thread, verbatim.** The dump is Pydantic AI's own serialized
-  message history (`ModelMessagesTypeAdapter` over the agent's `all_messages()`),
-  so it is faithful and replayable: the opening rules preamble, each game's "you
-  are {side}" and opponent-move messages, the flushed user turns, and the model's
-  structured responses (`move_rationale`, `cells`, `claimed_outcome`) — plus the
-  deferred `end_game` feedback — all in order, with whatever metadata the library
-  records (model settings, usage, timestamps).
+- **The complete thread, with full reasoning.** The dump is the player's stored
+  thread serialized with `ModelMessagesTypeAdapter`: the opening rules preamble, each
+  game's "you are {side}" and opponent-move messages, the flushed user turns, and the
+  model's structured responses (`move_rationale`, `cells`, `claimed_outcome`) — plus
+  the deferred `end_game` feedback — all in order, with whatever metadata the library
+  records (model settings, usage, timestamps). Crucially it preserves **every turn's
+  thinking**, including the prior-turn reasoning that "Pruning re-sent reasoning"
+  strips from later *requests*: the log is the debugging record, not the wire form. So
+  the player accumulates the thread incrementally, turn by turn, rather than rebuilding
+  it from the agent's `all_messages()` — which now reports the strip-processed history
+  and would progressively erase earlier turns' thinking from the dump.
 - **One file per LLM player instance.** A player's thread spans the whole match
   (see "The message thread" above), so its file holds that side's entire match
   conversation across all games, keyed by player name and side (e.g.
@@ -742,8 +783,10 @@ never affects how moves or faults are scored.
 
 To keep the first LLM player simple, and beyond the game-playing core above:
 usage / cost / latency tracking; per-player or per-provider setting overrides;
-persistence of the message thread across processes; and managing a thread that
-outgrows the model's context window over a long match.
+persistence of the message thread across processes; and fully managing a thread that
+still outgrows the model's context window over a long match — re-sent reasoning is
+already pruned from requests (see "Pruning re-sent reasoning"), which slows that
+growth but does not by itself cap it.
 
 ## 12. Matches
 

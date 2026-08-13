@@ -29,7 +29,12 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai.exceptions import ModelHTTPError, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    UserPromptPart,
+)
 
 from ..core import Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
@@ -168,8 +173,7 @@ class LLMPlayer(Player):
                     # "length", e.g. thinking that ran to the cap) is a distinct
                     # fault from genuinely malformed output, and gets its own
                     # feedback (think more briefly).
-                    self._history = list(captured)
-                    self._write_log()
+                    self._record_failed_turn(user_prompt, captured)
                     reason: PlayerFaultReason = (
                         PlayerFaultReason.THINKING_LIMIT_EXCEEDED
                         if self._hit_token_limit(captured)
@@ -202,12 +206,17 @@ class LLMPlayer(Player):
                         ) from exc
                     if self._backoff_and_retry(attempt):
                         continue
-                    if captured:
-                        self._history = list(captured)
-                    self._write_log()
+                    self._record_failed_turn(user_prompt, captured)
                     raise PlayerUnavailable(self._describe_unreachable(exc)) from exc
 
-            self._history = list(result.all_messages())
+            # Append only this turn's new messages to the thread we already hold.
+            # We must NOT rebuild from result.all_messages(): the
+            # strip_prior_thinking capability rewrites the history all_messages()
+            # reports too, so overwriting our thread with it would progressively
+            # erase earlier turns' thinking from the stored thread and the log.
+            # new_messages() carries the current turn's response with its thinking
+            # intact — only *prior* turns are stripped, and only on the wire.
+            self._history.extend(result.new_messages())
             self._write_log()
 
             output: LLMMove = result.output
@@ -216,6 +225,29 @@ class LLMPlayer(Player):
 
         # Unreachable: the final attempt either returns or raises above.
         raise AssertionError("choose_move exhausted its retries without resolving")
+
+    def _record_failed_turn(
+        self, user_prompt: str, captured: list[ModelMessage]
+    ) -> None:
+        """Persist a turn that raised — a fault or a transient failure — to the
+        thread and the log, on a path where no ``result`` object is available.
+
+        We must NOT recover the new turn by slicing ``captured`` at
+        ``len(self._history)``. ``capture_run_messages`` reports the *wire* history,
+        which pydantic-ai builds by running :func:`~config.strip_prior_thinking` and
+        then dropping the now-empty reasoning-only responses it leaves behind — so
+        ``captured`` can be strictly *shorter* than our unstripped thread, making a
+        length-based slice select nothing and silently lose the turn (a mid-match
+        unparseable fault vanished from the log this way). Instead reconstruct the
+        turn from what we know it was: the prompt we sent, plus the model's response,
+        which is always the tail of ``captured``. The response is kept verbatim (its
+        thinking intact) so the log stays complete and the next game's fault feedback
+        can point at what the model actually produced.
+        """
+        self._history.append(ModelRequest(parts=[UserPromptPart(content=user_prompt)]))
+        if captured and isinstance(captured[-1], ModelResponse):
+            self._history.append(captured[-1])
+        self._write_log()
 
     def end_game(self, result: GameResult) -> None:
         # Composed now, sent only if there is a next game: it stays queued and is

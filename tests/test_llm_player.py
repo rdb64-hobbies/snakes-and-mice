@@ -18,6 +18,7 @@ from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     TextPart,
     ThinkingPart,
@@ -266,6 +267,51 @@ def test_unparseable_output_is_logged_and_kept_in_history(tmp_path: Path) -> Non
     assert "I refuse to answer in the required format." in log_file.read_text()
 
 
+def test_failed_turn_recorded_when_captured_is_shorter_than_thread(
+    tmp_path: Path,
+) -> None:
+    # Regression: capture_run_messages reports the strip-processed WIRE history,
+    # which pydantic-ai compacts (dropping the empty reasoning-only responses
+    # strip_prior_thinking leaves behind) below our unstripped thread's length. The
+    # old recovery — self._history.extend(captured[len(self._history):]) — then
+    # selected an empty slice and silently dropped the faulting turn from the thread
+    # and the --log-llm dump (a real mid-match unparseable fault vanished this way).
+    # The turn must be recorded from the prompt we sent plus the captured response,
+    # regardless of how short the wire history was compacted to.
+    log_dir: Path = tmp_path / "logs"
+    player: LLMPlayer = LLMPlayer(
+        _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
+    )
+    player.start_game(Side.MOUSE)
+    # A thread longer than the (compacted) wire history we will hand the recovery.
+    player._history = [
+        ModelRequest(parts=[UserPromptPart(content="turn 1")]),
+        ModelResponse(parts=[ThinkingPart(content="game-1 fault: thinking only")]),
+        ModelRequest(parts=[UserPromptPart(content="new game")]),
+        ModelResponse(parts=[TextPart(content=json.dumps(_move(["C3", "D2"])))]),
+    ]
+    before: int = len(player._history)
+    # capture_run_messages, strictly shorter than the thread, ending in the failed
+    # response (a reasoning-only turn that never produced a move).
+    failed: ModelResponse = ModelResponse(parts=[ThinkingPart(content="no move")])
+    captured: list[ModelMessage] = [
+        ModelResponse(parts=[]),
+        ModelRequest(parts=[UserPromptPart(content="your turn (mouse).")]),
+        failed,
+    ]
+    assert len(captured) < before  # the shortfall the old slice mishandled
+
+    player._record_failed_turn("your turn (mouse). Choose your move.", captured)
+
+    # The turn is recorded: the prompt we sent, then the model's failed response…
+    assert len(player._history) == before + 2
+    assert isinstance(player._history[-2], ModelRequest)
+    assert player._history[-1] is failed
+    # …and it reached the log, not just the thread.
+    assert (log_dir / "bot-mouse.json").exists()
+    assert "no move" in (log_dir / "bot-mouse.json").read_text()
+
+
 def test_token_limit_truncation_is_a_distinct_fault(tmp_path: Path) -> None:
     # A response truncated at the output-token limit (the model thought until it
     # ran out, emitting no move) is THINKING_LIMIT_EXCEEDED, not UNPARSEABLE_OUTPUT
@@ -321,6 +367,60 @@ def test_unreachable_model_raises_player_unavailable(
         player.choose_move()
     assert "bot" in str(excinfo.value)
     assert (log_dir / "bot-mouse.json").exists()
+
+
+def test_prior_thinking_stripped_from_requests_but_kept_in_history() -> None:
+    # Over a match a reasoning model's own past thinking would otherwise be re-sent
+    # as input every turn, ballooning the context. The strip_prior_thinking history
+    # processor (attached to every agent by resolve_agent) removes it from what the
+    # model receives, while the stored thread — and so the --log-llm dump — keeps the
+    # full thinking for debugging. This does not touch the current turn's thinking.
+    from pydantic_ai.capabilities import ProcessHistory
+
+    from snakes_and_mice.config import strip_prior_thinking
+
+    saw_prior_thinking: list[bool] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        saw_prior_thinking.append(
+            any(
+                isinstance(part, ThinkingPart)
+                for msg in messages
+                if isinstance(msg, ModelResponse)
+                for part in msg.parts
+            )
+        )
+        return ModelResponse(
+            parts=[
+                ThinkingPart(content="reasoning about the board"),
+                TextPart(content=json.dumps(_move(["A1", "A2"]))),
+            ]
+        )
+
+    agent: Agent[None, LLMMove] = Agent(
+        model=FunctionModel(respond),
+        output_type=NativeOutput(LLMMove),
+        retries=0,
+        capabilities=[ProcessHistory(strip_prior_thinking)],
+    )
+    player: LLMPlayer = LLMPlayer(agent, name="bot")
+    player.start_game(Side.MOUSE)
+    player.choose_move()  # turn 1
+    player.observe_move(Side.SNAKE, Move.from_labels("E1", "E2"))
+    player.choose_move()  # turn 2: its request carries turn 1's response
+
+    # Neither request carried a prior thinking part — turn 2 saw turn 1's response
+    # with the reasoning stripped, so the model never re-reads its own thinking.
+    assert saw_prior_thinking == [False, False]
+    # Yet the stored thread retains EVERY turn's thinking, so the log stays
+    # complete: rebuilding history from the strip-processed all_messages() each
+    # turn would have erased the earlier turns' thinking, leaving only the last.
+    responses_with_thinking: int = sum(
+        any(isinstance(part, ThinkingPart) for part in msg.parts)
+        for msg in player._history
+        if isinstance(msg, ModelResponse)
+    )
+    assert responses_with_thinking == 2  # both turns, not just the most recent
 
 
 def test_full_game_relays_opponent_moves_only() -> None:
