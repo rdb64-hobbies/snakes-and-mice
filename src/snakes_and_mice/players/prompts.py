@@ -6,9 +6,10 @@ a model *follow the rules* (as opposed to play well). The mechanics only require
 that a preamble exists and that every :class:`~snakes_and_mice.faults.PlayerFaultReason`
 maps to some advice string — they are indifferent to the exact wording.
 
-Note: the "Your response" paragraph of :data:`RULES_PREAMBLE` describes the
-``LLMMove`` fields defined in :mod:`.llm`; keep the two in sync when either
-changes.
+Note: the "Your response" paragraph of :data:`RULES_PREAMBLE` (including its
+worked example) and the ``UNPARSEABLE_OUTPUT`` entry of :data:`FAULT_ADVICE`
+both name the ``LLMMove`` fields defined in :mod:`.llm`; keep all of them in
+sync when the fields change.
 """
 
 from __future__ import annotations
@@ -54,7 +55,11 @@ your opponent's.
 Your response. Each turn, return the structured fields: move_rationale (a short \
 justification), cells (one or two labels like ["C3","D4"]), and claimed_outcome \
 (exactly one of in_play, win, or cats_game — your honest assessment of the \
-position after your move)."""
+position after your move). For example, a valid response sets move_rationale to \
+"take the center and extend toward a diagonal", cells to ["C3","D4"], and \
+claimed_outcome to "in_play". Return all three fields — with exactly those \
+names — every turn, and be sure to actually emit them rather than ending your \
+response while still reasoning."""
 
 
 # How to explain each fault back to the model, so the next game's opening can
@@ -76,8 +81,10 @@ FAULT_ADVICE: dict[PlayerFaultReason, str] = {
         "played, so track every piece already on the board."
     ),
     PlayerFaultReason.UNPARSEABLE_OUTPUT: (
-        "your response could not be read as a move — return the required "
-        "structured fields with one or two valid cell labels."
+        "your response could not be read as a move — you must emit the move as "
+        "the structured output, not stop after reasoning. Return exactly the "
+        "fields move_rationale, cells (one or two labels like [\"C3\",\"D4\"]), "
+        "and claimed_outcome (one of in_play, win, or cats_game)."
     ),
     PlayerFaultReason.THINKING_LIMIT_EXCEEDED: (
         "you ran out of output tokens while still thinking and never produced "
