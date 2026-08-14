@@ -43,6 +43,22 @@ from .schedule import (
 )
 from .serialize import append_match_result
 
+# Common --players / --against combinations, shown at the bottom of --help. The
+# defaults (all vs same) give a round-robin; the rest illustrate the other subset
+# forms — an explicit list, the newcomer cross, and above/below cohorts.
+_EXAMPLES: str = """\
+examples (--players is subset A, --against is subset B; every match straddles them):
+  play-tournament-matches
+      full round-robin: every player meets every other, both seats (all vs same)
+  play-tournament-matches --players alice bob carol
+      round-robin among just those three (--against defaults to same)
+  play-tournament-matches --players newbie --against all
+      the newcomer against the whole roster, both seats, without making the
+      existing players replay one another
+  play-tournament-matches --players above gpt5 --against below gpt5
+      the stronger cohort vs the weaker one (by players.yaml order)
+"""
+
 
 def main(argv: list[str] | None = None) -> None:
     """Play many matches from two player subsets and append each result (§6).
@@ -58,6 +74,8 @@ def main(argv: list[str] | None = None) -> None:
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="play-tournament-matches",
         description="Play many Snakes and Mice matches and record them (§6).",
+        epilog=_EXAMPLES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--players", nargs="+", default=["all"], metavar="SELECTOR",
