@@ -22,6 +22,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ThinkingPart,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -310,6 +312,89 @@ def test_failed_turn_recorded_when_captured_is_shorter_than_thread(
     # …and it reached the log, not just the thread.
     assert (log_dir / "bot-mouse.json").exists()
     assert "no move" in (log_dir / "bot-mouse.json").read_text()
+
+
+def test_dangling_tool_call_is_closed_when_recorded(tmp_path: Path) -> None:
+    # Regression: an unparseable-output fault can be a final_result tool-call whose
+    # args failed validation; with no retries pydantic-ai raises before emitting the
+    # tool-return that closes it, so the response we persist ends in an unreturned
+    # tool-call. Left as-is, re-sending the thread next game makes the provider reject
+    # the whole request ("unprocessed tool calls") and abort the game. The faulting
+    # turn must be recorded verbatim (for the log/feedback) but immediately followed by
+    # a synthetic tool-return, so the stored thread is a valid history to re-send.
+    log_dir: Path = tmp_path / "logs"
+    player: LLMPlayer = LLMPlayer(
+        _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
+    )
+    player.start_game(Side.MOUSE)
+    failed: ModelResponse = ModelResponse(
+        parts=[
+            ThinkingPart(content="reasoning"),
+            ToolCallPart(
+                tool_name="final_result",
+                args='{"move_rationally": "typo"}',  # mistyped field: won't validate
+                tool_call_id="call-xyz",
+            ),
+        ]
+    )
+    captured: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="your turn (mouse).")]),
+        failed,
+    ]
+
+    player._record_failed_turn("your turn (mouse). Choose your move.", captured)
+
+    # The faulting response is stored verbatim, its broken tool-call intact (the log
+    # must show what the model actually produced)…
+    assert failed in player._history
+    assert "move_rationally" in (log_dir / "bot-mouse.json").read_text()
+    # …immediately followed by a synthetic tool-return closing that call.
+    tail: ModelMessage = player._history[-1]
+    assert isinstance(tail, ModelRequest)
+    assert any(
+        isinstance(part, ToolReturnPart) and part.tool_call_id == "call-xyz"
+        for part in tail.parts
+    )
+    # The thread is now well-formed: no tool-call anywhere is left unreturned.
+    call_ids: set[str] = {
+        part.tool_call_id
+        for msg in player._history
+        if isinstance(msg, ModelResponse)
+        for part in msg.parts
+        if isinstance(part, ToolCallPart)
+    }
+    returned_ids: set[str] = {
+        part.tool_call_id
+        for msg in player._history
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolReturnPart)
+    }
+    assert call_ids <= returned_ids
+
+
+def test_failed_turn_without_tool_call_gets_no_synthetic_return() -> None:
+    # The common unparseable/thinking-limit shape is a thinking- or text-only response
+    # with no tool-call at all. There is nothing to close, so no synthetic tool-return
+    # is appended — the thread must not grow a spurious empty request.
+    player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"])]), name="bot")
+    player.start_game(Side.MOUSE)
+    failed: ModelResponse = ModelResponse(parts=[ThinkingPart(content="no move")])
+    captured: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content="your turn (mouse).")]),
+        failed,
+    ]
+
+    player._record_failed_turn("your turn (mouse). Choose your move.", captured)
+
+    # Exactly the prompt and the failed response — no trailing tool-return request.
+    assert player._history[-1] is failed
+    assert not any(
+        isinstance(part, ToolReturnPart)
+        for msg in player._history
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+    )
 
 
 def test_token_limit_truncation_is_a_distinct_fault(tmp_path: Path) -> None:

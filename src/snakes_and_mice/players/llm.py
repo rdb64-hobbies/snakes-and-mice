@@ -32,7 +32,10 @@ from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 
@@ -246,8 +249,43 @@ class LLMPlayer(Player):
         """
         self._history.append(ModelRequest(parts=[UserPromptPart(content=user_prompt)]))
         if captured and isinstance(captured[-1], ModelResponse):
-            self._history.append(captured[-1])
+            response: ModelResponse = captured[-1]
+            self._history.append(response)
+            self._close_dangling_tool_calls(response)
         self._write_log()
+
+    def _close_dangling_tool_calls(self, response: ModelResponse) -> None:
+        """Follow any tool-call in a just-recorded faulting ``response`` with a
+        synthetic tool-return, so the stored thread stays a well-formed message
+        history the provider will accept when it is re-sent next game.
+
+        An unparseable-output fault can take the shape of a ``final_result`` tool-call
+        whose arguments failed validation (e.g. a mistyped field name). Because the
+        player runs with no retries (§11), pydantic-ai raises *before* emitting the
+        tool-return that would normally close that call, so the response we persist
+        ends in a tool-call with no matching return. Left unclosed, re-sending the
+        thread makes the provider reject the whole request ("cannot provide a new user
+        prompt when the message history contains unprocessed tool calls"), which would
+        abort the next game — and, misread as a backend error, the whole match.
+
+        ``_record_failed_turn`` is the *only* place a dangling call can enter the
+        thread (the success path extends from ``new_messages()``, always well-formed),
+        and the offending call is in the response we just appended — so this is the one
+        spot that needs the repair, done once, here. The faulting response itself is
+        kept verbatim (its broken args intact) for the log and the next game's fault
+        feedback; only a closing tool-return is added after it.
+        """
+        closers: list[ModelRequestPart] = [
+            ToolReturnPart(
+                tool_name=part.tool_name,
+                content="This move could not be processed; the game ended.",
+                tool_call_id=part.tool_call_id,
+            )
+            for part in response.parts
+            if isinstance(part, ToolCallPart)
+        ]
+        if closers:
+            self._history.append(ModelRequest(parts=closers))
 
     def end_game(self, result: GameResult) -> None:
         # Composed now, sent only if there is a next game: it stays queued and is

@@ -654,6 +654,21 @@ without charging the player or aborting the match. This is distinct from a
 *configuration* failure — a misspelled/unavailable model, a rejected key — which no
 retry fixes and which aborts the whole run with a clear message, not a game outcome.)
 
+Because there are no in-run retries, an unparseable-output fault can leave the thread
+in a shape the provider will not accept on the *next* turn. When the model's bad
+output is a structured-output tool-call whose arguments fail validation (e.g. a
+mistyped field name), Pydantic AI raises before emitting the tool-return it would
+normally use to close that call — so the faulting turn, persisted verbatim for the
+log and fault feedback, ends in a tool-call with no matching return. Re-sending such a
+thread makes the provider reject the whole request ("cannot provide a new user prompt
+when the message history contains unprocessed tool calls"), which would abort the next
+game and, misread as a backend error, the whole match. So when the player records a
+faulting turn it keeps the broken call verbatim but immediately follows it with a
+synthetic tool-return, leaving the stored thread a well-formed message history that is
+safe to re-send. This is the *only* point a dangling call can arise (the normal path
+appends only Pydantic AI's own well-formed turns), so the repair is done once, where
+the turn is recorded, rather than re-scanned on every request.
+
 ### Model selection
 
 A player is specified by a **provider** and a **model name**, one model per player
