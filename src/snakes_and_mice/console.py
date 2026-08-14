@@ -10,12 +10,14 @@ to any other CLI that renders through this module).
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 
 from .board import Board
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
 from .faults import PlayerFaultReason
 from .observer import ObservationLevel, Observer
 from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
+from .tally import PlayerStanding, StandingsSort
 
 # The piece glyphs are emoji, which occupy TWO display columns in a terminal.
 # Every rendered cell is therefore normalized to a two-column token so the board
@@ -122,6 +124,75 @@ def _fault_breakdown(faults: list[GameResult], side: Side) -> str:
         )
     ]
     return ", ".join(parts)
+
+
+# Standings columns: header, and how to read the value off a PlayerStanding.
+# The count columns render as-is; the three rate columns go through _percent.
+_STANDING_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("Player", "name"),
+    ("Played", "played"),
+    ("Won", "won"),
+    ("Lost", "lost"),
+    ("Tied", "tied"),
+    ("Faulted", "faulted"),
+    ("OppFaulted", "opponent_faulted"),
+    ("Win%", "win_rate"),
+    ("Loss%", "loss_rate"),
+    ("Fault%", "fault_rate"),
+)
+_RATE_COLUMNS: frozenset[str] = frozenset({"win_rate", "loss_rate", "fault_rate"})
+
+
+def _percent(rate: float | None) -> str:
+    """A rate in ``[0, 1]`` as a percentage, or ``—`` when it is undefined (§6)."""
+    return "—" if rate is None else f"{rate * 100:.1f}%"
+
+
+def render_standings(
+    standings: Sequence[PlayerStanding], sort: StandingsSort
+) -> str:
+    """Render per-player standings (§6) as an aligned text table.
+
+    ``standings`` are shown in the order given (already ranked by
+    :func:`~snakes_and_mice.tally.sort_standings`); ``sort`` only labels the header
+    so the reader knows which column ordered the table. The name column is
+    left-aligned, every count and rate column right-aligned.
+    """
+    if not standings:
+        return "No matches recorded yet."
+
+    rows: list[list[str]] = []
+    for standing in standings:
+        cells: list[str] = []
+        for _, attr in _STANDING_COLUMNS:
+            value: object = getattr(standing, attr)
+            if attr in _RATE_COLUMNS:
+                assert value is None or isinstance(value, float)
+                cells.append(_percent(value))
+            else:
+                cells.append(str(value))
+        rows.append(cells)
+
+    headers: list[str] = [header for header, _ in _STANDING_COLUMNS]
+    widths: list[int] = [
+        max(len(headers[i]), *(len(row[i]) for row in rows))
+        for i in range(len(headers))
+    ]
+
+    def format_row(cells: Sequence[str]) -> str:
+        # First column (the name) left-aligned; the numeric columns right-aligned.
+        padded: list[str] = [cells[0].ljust(widths[0])]
+        padded += [cells[i].rjust(widths[i]) for i in range(1, len(cells))]
+        return "  ".join(padded).rstrip()
+
+    lines: list[str] = [
+        f"Standings — {len(standings)} "
+        f"{'player' if len(standings) == 1 else 'players'}, sorted by {sort.value}%",
+        "",
+        format_row(headers),
+        *(format_row(row) for row in rows),
+    ]
+    return "\n".join(lines)
 
 
 class ConsoleObserver(Observer):

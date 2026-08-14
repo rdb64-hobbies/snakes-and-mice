@@ -16,7 +16,11 @@ from snakes_and_mice import (
     TurnOutcome,
     play_match,
 )
-from snakes_and_mice.console import ConsoleObserver, describe_match_result
+from snakes_and_mice.console import (
+    ConsoleObserver,
+    describe_match_result,
+    render_standings,
+)
 from snakes_and_mice.core import Move, Side
 from snakes_and_mice.faults import PlayerFaultReason
 from snakes_and_mice.result import (
@@ -25,6 +29,7 @@ from snakes_and_mice.result import (
     PlayerFaultDetail,
     Termination,
 )
+from snakes_and_mice.tally import PlayerStanding, StandingsSort
 
 
 def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
@@ -132,6 +137,27 @@ def test_match_summary_omits_fault_breakdown_when_clean() -> None:
     summary: str = describe_match_result(result)
 
     assert "Faults" not in summary
+
+
+def test_render_standings_shows_columns_percentages_and_dashes() -> None:
+    standings: list[PlayerStanding] = [
+        PlayerStanding("opus", played=10, won=6, lost=2, tied=2,
+                       faulted=0, opponent_faulted=0),
+        PlayerStanding("dud", played=3, won=0, lost=0, tied=0,
+                       faulted=3, opponent_faulted=0),
+    ]
+    table: str = render_standings(standings, StandingsSort.WIN)
+
+    assert "sorted by win%" in table
+    assert "Win%" in table and "Fault%" in table
+    assert "60.0%" in table  # opus: 6 clean wins of 10
+    assert "—" in table  # dud never played a clean game → undefined win/loss rate
+    # The header and both players each render on their own line.
+    assert "opus" in table and "dud" in table
+
+
+def test_render_standings_empty_is_a_plain_message() -> None:
+    assert render_standings([], StandingsSort.WIN) == "No matches recorded yet."
 
 
 def test_single_game_omits_match_scaffolding(

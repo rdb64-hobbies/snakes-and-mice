@@ -1,6 +1,6 @@
 [project]
 name = "snakes-and-mice"
-version = "0.5.3"
+version = "1.0.0"
 description = "Snakes and Mice — a game engine and pluggable players, used as an LLM reasoning benchmark"
 readme = "README.md"
 authors = [
@@ -15,7 +15,9 @@ dependencies = [
 ]
 
 [project.scripts]
-snakes-and-mice = "snakes_and_mice.cli:main"
+play-match = "snakes_and_mice.match_cli:main"
+play-tournament-matches = "snakes_and_mice.matches_cli:main"
+tally-tournament = "snakes_and_mice.tally_cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.30,<0.12.0"]

@@ -1097,7 +1097,7 @@ progress toward that, not incidental churn.
     across a range of providers, a single cross-game message thread with
     feedback, structured output with fault mapping, YAML roster / provider config
     (keys in `.env`), the `--mouse`/`--snake` roster names, and `--log-llm`
-    message logging. *(current)*
+    message logging.
 - **1.0 — first genuinely useful release.** Reached when the **LLM player** (§4,
   landed in 0.5) can be driven by the **tournament structure** (§6) — the
   `play-tournament-matches` and `tally-tournament` commands over a shared results
@@ -1105,7 +1105,7 @@ progress toward that, not incidental churn.
   other, and against strong non-LLM players, over many games and score them. Other
   0.x milestones (e.g. a heuristic or MCTS player, §3) may ship first, but **1.0 is
   defined by the LLM-player + tournament pair**, regardless of what else arrives
-  before it.
+  before it. *(current)*
 - **After 1.0**, standard SemVer applies: incompatible changes to the player API
   or CLI bump the major, backward-compatible capabilities bump the minor, and
   fixes bump the patch.
