@@ -113,6 +113,40 @@ def test_tally_aggregates_both_seats_and_reconciles() -> None:
     assert a.fault_rate == pytest.approx(2 / 14)  # denominator is games played
 
 
+def _fault(offender: Side, reason: PlayerFaultReason) -> GameResult:
+    return GameResult(
+        Termination.PLAYER_FAULT,
+        fault=PlayerFaultDetail(offender=offender, reason=reason),
+    )
+
+
+def test_tally_breaks_down_fault_reasons_per_player() -> None:
+    faults: list[GameResult] = [
+        _fault(Side.MOUSE, PlayerFaultReason.UNPARSEABLE_OUTPUT),
+        _fault(Side.MOUSE, PlayerFaultReason.UNPARSEABLE_OUTPUT),
+        _fault(Side.SNAKE, PlayerFaultReason.CELL_NOT_EMPTY),
+    ]
+    match: MatchResult = _match(
+        "A", "B", num_games=5, mouse_wins=1, snake_wins=1,
+        mouse_faults=2, snake_faults=1, faults=faults,
+    )
+    standings: dict[str, PlayerStanding] = {s.name: s for s in tally([match])}
+
+    # Each side's faults are attributed to that side's player, by reason.
+    assert dict(standings["A"].fault_reasons) == {
+        PlayerFaultReason.UNPARSEABLE_OUTPUT: 2
+    }
+    assert dict(standings["B"].fault_reasons) == {PlayerFaultReason.CELL_NOT_EMPTY: 1}
+    # The breakdown reconciles with the faulted total.
+    assert sum(standings["A"].fault_reasons.values()) == standings["A"].faulted
+
+
+def test_tally_leaves_fault_reasons_empty_for_a_clean_player() -> None:
+    match: MatchResult = _match("A", "B", num_games=2, mouse_wins=1, snake_wins=1)
+    standings: dict[str, PlayerStanding] = {s.name: s for s in tally([match])}
+    assert standings["A"].fault_reasons == {}
+
+
 def test_tally_excludes_aborted_games_from_played() -> None:
     match: MatchResult = _match("A", "B", num_games=4, mouse_wins=2, aborted=2)
     standings: dict[str, PlayerStanding] = {s.name: s for s in tally([match])}

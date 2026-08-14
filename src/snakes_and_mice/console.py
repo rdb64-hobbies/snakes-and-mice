@@ -10,7 +10,7 @@ to any other CLI that renders through this module).
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from .board import Board
 from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
@@ -117,6 +117,12 @@ def _fault_breakdown(faults: list[GameResult], side: Side) -> str:
         for game in faults
         if game.fault is not None and game.fault.offender is side
     )
+    return _format_reason_counts(counts)
+
+
+def _format_reason_counts(counts: Mapping[PlayerFaultReason, int]) -> str:
+    """Format fault-reason counts as ``reason ×n, …``, most frequent first (ties
+    broken by reason name), or an empty string if there are none."""
     parts: list[str] = [
         f"{reason.value} ×{count}"
         for reason, count in sorted(
@@ -192,6 +198,22 @@ def render_standings(
         format_row(headers),
         *(format_row(row) for row in rows),
     ]
+    return "\n".join(lines)
+
+
+def render_fault_tally(standings: Sequence[PlayerStanding]) -> str:
+    """Render a per-player fault breakdown for every player that faulted (§6).
+
+    Uses the same ``reason ×n`` format as a match's own fault breakdown, one line
+    per player, in the order given (so it follows the ranked standings). Players
+    with no faults are omitted; if no one faulted, a plain note is returned.
+    """
+    faulted: list[PlayerStanding] = [s for s in standings if s.faulted]
+    if not faulted:
+        return "No faults recorded."
+    lines: list[str] = ["Faults by player:"]
+    for standing in faulted:
+        lines.append(f"  {standing.name}: {_format_reason_counts(standing.fault_reasons)}")
     return "\n".join(lines)
 
 

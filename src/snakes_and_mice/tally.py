@@ -10,11 +10,13 @@ light and unit-testable, taking the roster only as an ordered list of names.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import Enum
 
 from .core import Side
+from .faults import PlayerFaultReason
 from .result import MatchResult
 
 
@@ -35,6 +37,9 @@ class PlayerStanding:
     tied: int
     faulted: int  # games this player faulted
     opponent_faulted: int  # games the opponent faulted
+    # How this player's faults break down by reason; the counts sum to `faulted`.
+    # Empty when the player never faulted.
+    fault_reasons: Mapping[PlayerFaultReason, int] = field(default_factory=dict)
 
     @property
     def clean_games(self) -> int:
@@ -67,6 +72,7 @@ class _Accumulator:
     tied: int = 0
     faulted: int = 0
     opponent_faulted: int = 0
+    fault_reasons: Counter[PlayerFaultReason] = field(default_factory=Counter)
 
 
 def tally(results: Iterable[MatchResult]) -> list[PlayerStanding]:
@@ -98,6 +104,14 @@ def tally(results: Iterable[MatchResult]) -> list[PlayerStanding]:
         snake.faulted += result.snake_faults
         snake.opponent_faulted += result.mouse_faults
 
+        # Attribute each recorded fault to whichever side committed it in this
+        # match, so a player's faults break down by reason across the tournament.
+        for game in result.faults:
+            detail = game.fault
+            if detail is None:
+                continue
+            totals[result.names[detail.offender]].fault_reasons[detail.reason] += 1
+
     return [
         PlayerStanding(
             name=name,
@@ -107,6 +121,7 @@ def tally(results: Iterable[MatchResult]) -> list[PlayerStanding]:
             tied=acc.tied,
             faulted=acc.faulted,
             opponent_faulted=acc.opponent_faulted,
+            fault_reasons=dict(acc.fault_reasons),
         )
         for name, acc in totals.items()
     ]

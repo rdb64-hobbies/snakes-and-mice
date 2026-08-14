@@ -19,6 +19,7 @@ from snakes_and_mice import (
 from snakes_and_mice.console import (
     ConsoleObserver,
     describe_match_result,
+    render_fault_tally,
     render_standings,
 )
 from snakes_and_mice.core import Move, Side
@@ -158,6 +159,32 @@ def test_render_standings_shows_columns_percentages_and_dashes() -> None:
 
 def test_render_standings_empty_is_a_plain_message() -> None:
     assert render_standings([], StandingsSort.WIN) == "No matches recorded yet."
+
+
+def test_render_fault_tally_lists_faulty_players_in_the_match_format() -> None:
+    standings: list[PlayerStanding] = [
+        PlayerStanding("clean", played=4, won=2, lost=2, tied=0,
+                       faulted=0, opponent_faulted=0),
+        PlayerStanding("messy", played=5, won=1, lost=1, tied=0,
+                       faulted=3, opponent_faulted=0,
+                       fault_reasons={
+                           PlayerFaultReason.UNPARSEABLE_OUTPUT: 2,
+                           PlayerFaultReason.CELL_NOT_EMPTY: 1,
+                       }),
+    ]
+    text: str = render_fault_tally(standings)
+
+    assert "Faults by player:" in text
+    # Same reason ×n format as a match summary, most frequent first.
+    assert "messy: unparseable_output ×2, cell_not_empty ×1" in text
+    assert "clean" not in text  # players with no faults are omitted
+
+
+def test_render_fault_tally_when_no_one_faulted() -> None:
+    clean: PlayerStanding = PlayerStanding(
+        "clean", played=2, won=1, lost=1, tied=0, faulted=0, opponent_faulted=0
+    )
+    assert render_fault_tally([clean]) == "No faults recorded."
 
 
 def test_single_game_omits_match_scaffolding(

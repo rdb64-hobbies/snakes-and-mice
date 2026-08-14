@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .cli_common import DEFAULT_RESULTS_PATH
 from .config import ConfigError, load_roster
-from .console import render_standings
+from .console import render_fault_tally, render_standings
 from .faults import TournamentError
 from .result import MatchResult
 from .serialize import read_match_results
@@ -35,7 +35,8 @@ def main(argv: list[str] | None = None) -> None:
     ``--tournament-results FILE`` selects the file (default the shared results
     file) and ``--sort win%|loss%|fault%`` orders the table best-on-top (default
     ``win%``). Ties keep ``players.yaml`` order; if that file is unavailable, ties
-    fall back to alphabetical name order.
+    fall back to alphabetical name order. ``--faults`` appends a per-player
+    breakdown of fault types for every player that faulted.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="tally-tournament",
@@ -49,6 +50,10 @@ def main(argv: list[str] | None = None) -> None:
         "--sort", choices=list(_SORT_CHOICES), default="win%",
         help="which rate ranks the standings, best-on-top (default: win%%)",
     )
+    parser.add_argument(
+        "--faults", action="store_true",
+        help="append a per-player breakdown of fault types",
+    )
     args: argparse.Namespace = parser.parse_args(argv)
 
     try:
@@ -60,6 +65,9 @@ def main(argv: list[str] | None = None) -> None:
     sort: StandingsSort = _SORT_CHOICES[args.sort]
     standings: list[PlayerStanding] = sort_standings(tally(results), sort, roster_order)
     print(render_standings(standings, sort))
+    if args.faults:
+        print()
+        print(render_fault_tally(standings))
 
 
 def _roster_order() -> list[str]:
