@@ -1,7 +1,7 @@
 # Snakes and Mice — Specification
 
 > Status: **living draft**. This document defines the game and the roadmap
-> through **1.0** (see §9 for the versioning scheme).
+> through **1.0** (see §10 for the versioning scheme).
 
 ## 1. Overview
 
@@ -440,7 +440,7 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 
 The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
-implementation order (the first three are implemented — see the milestones in §9):
+implementation order (the first four are implemented — see the milestones in §10):
 
 1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
@@ -480,12 +480,12 @@ for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
 
 ### Tournaments
 
-The project **will support a tournament structure** that pits player types against
+The project supports a **tournament structure** that pits player types against
 each other over many games, composed from **matches** (§5) as its building block.
-This is a committed goal, but its details (pairing schedule, scoring/standings,
-handling of the Snake/Mouse start asymmetry, reporting) warrant their own sub-spec,
-to be written later. This is a **1.0** goal, not part of the current 0.x line (see
-§9).
+A tournament is simply *any set of matches*, accumulated in a shared results file,
+with match-**running** kept deliberately separate from result-**tallying**. This
+is specified in full in §6, and together with the LLM player (§4) it defines the
+**1.0** release (§10).
 
 ## 4. The LLM player
 
@@ -655,7 +655,7 @@ AI, so none needs extra endpoint configuration; we resolve `(provider, model)` t
 appropriate Pydantic AI model. Custom providers are OpenAI-compatible endpoints
 reached at a configured base URL.
 
-Three sources of configuration, parsed **outside** the player (§7, Architecture):
+Three sources of configuration, parsed **outside** the player (§8, Architecture):
 
 - **`players.yaml`** — the roster of available players. Each entry is a free-form
   **name** (its identity in matches and standings, independent of the model — in
@@ -777,8 +777,8 @@ A **match** is two fixed players playing a sequence of games. It is the unit tha
 makes inter-player — especially inter-LLM — comparison meaningful, and because the
 two `Player` instances **persist across all the games**, it is also what lets the
 LLM player carry feedback from one game into the next (§3, "Feedback across games";
-§4). Matches are the building block of the eventual tournament structure (§3,
-"Tournaments"), which is deferred; matches themselves are part of the road to 1.0.
+§4). Matches are the building block of the tournament structure (§6), which they
+compose; matches themselves are part of the road to 1.0.
 
 ### Definition
 
@@ -818,7 +818,7 @@ or misread an outcome — each carrying its `PlayerFaultDetail`. Aborted games a
 counted but not otherwise recorded: they belong to neither player. By construction
 `mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults + aborted ==
 num_games`, and `mouse_faults + snake_faults == len(faults)`. Richer scoring and
-standings belong to tournaments and are deferred.
+standings belong to tournaments (§6), which aggregate these per-match tallies.
 
 ### Observation levels
 
@@ -852,31 +852,179 @@ only thing that ever waits for input is a human player taking its own turn. Beca
 a human must see the board to play, **if either player is human the CLI builds the
 observer at `MOVE`** (a coarser request is overridden, with a message).
 
-## 6. Interface
+## 6. Tournaments
 
-A **text CLI**:
+A **tournament** is simply a **set of matches** — *any* set, with no structural
+requirement on which players meet or how often. This makes the tournament the
+loosest possible composition of the match building block (§5), and it lets the
+project keep **running matches** entirely separate from **tallying results**,
+joined only by a shared results file. Anything that appends a `MatchResult`
+contributes to a tournament; anything that reads them back can score it.
 
-- Prints the board (ASCII, as in §2.2) with mice and snakes shown as distinct
-  emoji: 🐭 (mouse) and 🐍 (snake).
-- Reports whose turn it is, the move played, and the outcome
-  (`Mouse wins`, `Snake wins`, or `Cat's game`).
-- **Watches play at a chosen level.** The CLI attaches an `Observer` (§3) whose
-  **observation level** (`--watch`, default `move`) sets the detail — `match`,
-  `game`, or `move` (§5). There is no artificial pausing; only a human player's
-  own input paces the game.
-- **Runs a match.** `--mouse` and `--snake` each name who plays that side —
-  `random`, `human`, or an **LLM roster name** from `players.yaml` (§4); `--games
-  N` (default 1) sets the match length, with sides fixed for the match (§5). If
-  either player is human the level is forced to `move` (with a message), since a
-  human must see the board. E.g. `snakes-and-mice --mouse human --snake random`
-  plays a single game as Mouse, and `snakes-and-mice --mouse opus --snake gpt5
-  --games 20 --watch game` runs a 20-game match between two LLMs, reporting per
-  game.
-- **Logs LLM conversations (debugging).** `--log-llm [DIR]` (off by default) dumps
-  each LLM player's full raw message thread as JSON, for inspecting how a model
-  reasoned (§4, "Message logging"). A no-op for non-LLM players.
+### The results file
 
-## 7. Architecture (proposed)
+Match results accumulate in a single **append-only JSON Lines** file,
+`tournament-results.jsonl` by default. **Each line is one serialized
+`MatchResult`** (§5) — nothing more: no wrapper, no timestamp, no extra identity
+metadata. A player is identified solely by the `name` recorded in
+`MatchResult.names`.
+
+- **Append-only, shared, no dedup.** Any process that runs matches appends its
+  line(s); the file simply grows. Running the same pairing twice yields two
+  counted lines — there is no de-duplication and no resume/skip logic. A
+  tournament is whatever set of lines the file happens to hold.
+- **Crash-safe by construction.** Because each completed match is a self-contained
+  line, an interrupted run leaves a valid file of every match finished so far.
+- **A player name is the only identity.** Reusing one name for different
+  providers/models merges them in the tally — a deliberate choice the operator
+  owns, and one that can be used on purpose.
+- **Documented encoding.** The line is a stable JSON encoding of `MatchResult`,
+  including its `Side`-keyed `names` and its nested `faults: list[GameResult]`
+  (each with its `PlayerFaultDetail`, `Move`/`Cell`, and enum fields). This
+  encoding — which round-trips a `MatchResult` — is the contract between the
+  runners that write it and the tally that reads it.
+
+### Running matches
+
+Two commands write matches into the file; a third (below) reads them. Both runners
+share player construction, roster loading, and `--watch` handling with the
+single-match CLI (§7).
+
+**`play-match`** — the existing single-match command (§7), primarily a debugging
+and casual-play tool (LLM logs, playing against `random` or `human`). By default
+it does **not** touch the results file. The opt-in flag `--tournament-results
+[FILE]` records its `MatchResult` as one line — a convenient way to hand-craft or
+top up a tournament one match (or, with `--games`, a few) at a time.
+
+**`play-tournament-matches`** — the batch runner. It generates and plays many
+matches from **two player subsets** and appends each result. Appending is
+intrinsic to this command (its whole purpose); its `--tournament-results [FILE]`
+only overrides the default path.
+
+*The one generating operation.* A match is an ordered `(mouse, snake)` pair of
+distinct players. Given subsets **A** and **B**, the command emits a match for
+every ordered distinct pair `(x, y)` whose unordered matchup **straddles** the two
+subsets:
+
+```
+emit (mouse=x, snake=y)  for all x ≠ y  where  (x∈A and y∈B) or (x∈B and y∈A)
+```
+
+This single rule expresses every intended schedule; the seat-swap (each matchup
+played both ways) and the exclusion of self-play (`x ≠ y`) fall directly out of
+it:
+
+- **All pairs (round-robin).** A = `all`, B = `same` (the defaults): every player
+  meets every other, both seats — `N·(N−1)` matches for `N` players.
+- **All pairs within a subset.** A = an explicit subset, B = `same`: the same,
+  restricted to that subset.
+- **Cross of two subsets.** A and B distinct: every matchup with one player from
+  each, both seats — `2·N·M` matches for disjoint subsets of size `N` and `M`,
+  fewer when they overlap (`x ≠ y` drops the self-play). The motivating case is
+  **introducing new players**: A = the newcomers, B = `all` plays each newcomer
+  against the whole roster, both seats, *without* making the existing players
+  replay one another (a pair of two existing players fails the straddle predicate).
+
+*Subset selectors.* Each of A (`--players`, default `all`) and B (`--against`,
+default `same`) is given by exactly **one** selector:
+
+- an explicit list of player names,
+- `all` — every player in `players.yaml`,
+- `same` — the same set as the other subset (B only; it is B's default),
+- `above <name>` — every player listed **above** `<name>` in `players.yaml`
+  (exclusive of `<name>` itself),
+- `below <name>` — every player listed **below** `<name>` (exclusive).
+
+`above`/`below` make the **order of `players.yaml` a meaningful ranking** (order
+the roster by rough strength and `above gpt5` names the stronger cohort); this is
+a documented contract, and roster loading preserves the file's order. The pure,
+unit-testable schedule computation — subsets + roster order → the ordered list of
+`(mouse, snake)` name pairs — is kept separate from argument parsing.
+
+*Other options.* `--games N` sets a uniform game count for every match; `--watch`
+selects the observation level (§5), defaulting to `game` (coarser than
+`play-match`, since a batch can be large). **Human players are rejected** — a batch
+runs unattended, with no one to see the board or type a move — so the "human
+forces `move`" rule (§5) never applies here. There is no `--log-llm`: a
+per-conversation dump across a large batch is not useful.
+
+### Tallying results
+
+**`tally-tournament`** reads a results file (default `tournament-results.jsonl`)
+and prints **per-player standings**. For each player — keyed by the `name` in
+`MatchResult.names`, so a name reused across models is merged — it walks every
+match the player appears in, notes which side the player took, and accumulates:
+
+| Column | If the player was Mouse | If the player was Snake |
+| --- | --- | --- |
+| `played` (excl. aborted) | `num_games − aborted` | `num_games − aborted` |
+| `won` | `mouse_wins` | `snake_wins` |
+| `lost` | `snake_wins` | `mouse_wins` |
+| `tied` | `cats_games` | `cats_games` |
+| `faulted` | `mouse_faults` | `snake_faults` |
+| `opponent_faulted` | `snake_faults` | `mouse_faults` |
+
+These six categories **reconcile**: `played = won + lost + tied + faulted +
+opponent_faulted`. **Aborted games are excluded** everywhere — they are charged to
+neither side (§3).
+
+Derived percentages:
+
+- **`win%` = `won / (won + lost + tied)`** and **`loss%` = `lost / (won + lost +
+  tied)`** — the denominator being the games played with **neither** side faulting
+  (a fault is not a win or a loss for either side, §3). When that denominator is
+  `0` the percentage is undefined and shown as `—`.
+- **`fault%` = `faulted / played`** — here the denominator is games played
+  (excl. aborted), since a fault *is* a played game.
+
+`--sort win%|loss%|fault%` (default `win%`) orders the standings **best-on-top**:
+`win%` descending, `loss%` and `fault%` ascending (fewest losses / fewest faults
+first). Ties keep **roster order** (`players.yaml`).
+
+The standings are deliberately **side-agnostic**: no Mouse-vs-Snake breakdown,
+because whether the `B3` start favors a side is game-balance analysis deferred
+until after 1.0 (§10). A head-to-head player-vs-player matrix is likewise a natural
+later addition the data already supports, but beyond the per-player standings
+specified here.
+
+## 7. Interface
+
+The project ships a **text CLI** with three commands. All share the same
+presentation (the `console` layer, §8): the board rendered in ASCII (as in §2.2)
+with distinct emoji — 🐭 (mouse) and 🐍 (snake) — reporting of whose turn it is,
+the move played, and the outcome (`Mouse wins`, `Snake wins`, or `Cat's game`),
+and an `Observer` (§3) watching at a selectable **observation level**
+(`--watch match|game|move`, §5). There is no artificial pausing; only a human
+player's own input paces a game.
+
+**`play-match`** — play or watch a **single match**. `--mouse` and `--snake` each
+name who plays that side: `random`, `human`, or an **LLM roster name** from
+`players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
+for the match (§5); `--watch` defaults to `move`. If either player is human the
+level is forced to `move` (with a message), since a human must see the board.
+`--log-llm [DIR]` (off by default) dumps each LLM player's full raw message thread
+as JSON for debugging (§4, "Message logging"); a no-op for non-LLM players.
+`--tournament-results [FILE]` (off by default) records the resulting `MatchResult`
+as a line in the results file (§6) — absent ⇒ nothing is written, bare ⇒ append to
+`tournament-results.jsonl`, with a path ⇒ append there. Because this command is
+mainly for debugging and casual play, it stays out of the results file unless asked.
+E.g. `play-match --mouse human --snake random` plays a single game as Mouse, and
+`play-match --mouse opus --snake gpt5 --games 20 --watch game` runs a 20-game match
+between two LLMs, reporting per game.
+
+**`play-tournament-matches`** — run **many** matches from two player subsets and
+append each result to the file (§6). Options: `--players` / `--against` (the subset
+selectors), `--games N`, `--watch` (default `game`), and `--tournament-results
+[FILE]` (path override only — this command always appends). Human players are
+rejected. E.g. `play-tournament-matches` runs a full round-robin, and
+`play-tournament-matches --players new-model --against all` enters a new player
+against the whole roster.
+
+**`tally-tournament`** — read a results file and print per-player standings (§6).
+`--tournament-results [FILE]` selects the file (default `tournament-results.jsonl`)
+and `--sort win%|loss%|fault%` (default `win%`) orders the table.
+
+## 8. Architecture (proposed)
 
 Rough module layout (subject to change once we start coding):
 
@@ -889,19 +1037,27 @@ Rough module layout (subject to change once we start coding):
   so both can drive it without a cycle.
 - `match` — runs a match: a sequence of games between two fixed players (§5),
   reusing the same instances so LLM feedback carries across games, and producing a
-  `MatchResult`. Tournaments will compose matches in their own module later;
-  together these form the "engine" that drives play.
+  `MatchResult`.
+- `tournament` — the tournament logic (§6), independent of any CLI: the pure
+  **schedule builder** (subsets + roster order → the ordered `(mouse, snake)` name
+  pairs), reading/writing the JSON-Lines **results file** (the documented
+  `MatchResult` encoding), and the per-player **tally** that produces standings.
+  Together with `match` and `game` this forms the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
   human, and — per §4 — the LLM player). Loading the LLM roster from
   `players.yaml` / `providers.yaml` / `.env` lives in a small config module
   alongside it, keeping YAML parsing out of the player itself.
-- `cli` — rendering the board, reporting outcomes, and watching play via an
-  `Observer` at a selectable observation level (§5).
+- `console` — the shared presentation layer: board rendering, result summaries,
+  and the stdout `Observer`.
+- **CLI frontends** — one thin module per command (§7), sharing player
+  construction, roster loading, and `--watch` handling via a common helper
+  (`cli_common`): `match_cli` (`play-match`), `matches_cli`
+  (`play-tournament-matches`), and `tally_cli` (`tally-tournament`).
 
 Data types to nail down when we build: cell coordinate, piece/player enum,
 board, move (a pair of cells), and game result.
 
-## 8. Tech stack & tooling
+## 9. Tech stack & tooling
 
 - **Language:** Python.
 - **Environment & dependencies:** `uv`.
@@ -919,7 +1075,7 @@ board, move (a pair of cells), and game result.
   checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
   strict configuration.
 
-## 9. Versioning & scope
+## 10. Versioning & scope
 
 The project follows [Semantic Versioning](https://semver.org/); the version in
 `pyproject.toml` tracks capability milestones. The purpose of the project — an
@@ -941,10 +1097,11 @@ progress toward that, not incidental churn.
     (keys in `.env`), the `--mouse`/`--snake` roster names, and `--log-llm`
     message logging. *(current)*
 - **1.0 — first genuinely useful release.** Reached when the **LLM player** (§4,
-  landed in 0.5) can be driven by the **tournament structure** (§3): only then
-  can the project do what it exists to do — pit LLMs against each other, and
-  against strong non-LLM players, over many games and score them. Other 0.x
-  milestones (e.g. a heuristic or MCTS player, §3) may ship first, but **1.0 is
+  landed in 0.5) can be driven by the **tournament structure** (§6) — the
+  `play-tournament-matches` and `tally-tournament` commands over a shared results
+  file: only then can the project do what it exists to do — pit LLMs against each
+  other, and against strong non-LLM players, over many games and score them. Other
+  0.x milestones (e.g. a heuristic or MCTS player, §3) may ship first, but **1.0 is
   defined by the LLM-player + tournament pair**, regardless of what else arrives
   before it.
 - **After 1.0**, standard SemVer applies: incompatible changes to the player API
