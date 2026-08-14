@@ -1,7 +1,7 @@
 # Snakes and Mice — Specification
 
 > Status: **living draft**. This document defines the game and the roadmap
-> through **1.0** (see §16 for the versioning scheme).
+> through **1.0** (see §9 for the versioning scheme).
 
 ## 1. Overview
 
@@ -24,9 +24,9 @@ of matchups both matter:
 A model's reasoning skill is judged not only by wins, draws, and losses but also
 by **how often it faults** — a player fault being an illegal move, a failure to
 produce an interpretable move, or a misreading of the game's outcome. Fault
-frequency, broken down by `PlayerFaultReason` (§10), is itself a meaningful
-metric. This is why supporting a range of LLM providers and models (§11) and a
-tournament structure for head-to-head comparison (§10) are central rather than
+frequency, broken down by `PlayerFaultReason` (§3), is itself a meaningful
+metric. This is why supporting a range of LLM providers and models (§4) and a
+tournament structure for head-to-head comparison (§3) are central rather than
 incidental features.
 
 The design goal is a clean separation between:
@@ -36,7 +36,9 @@ The design goal is a clean separation between:
 
 The engine never knows or cares *what kind* of player is on either side.
 
-## 2. The two players
+## 2. Game play
+
+### 2.1 The two players
 
 There are exactly two players, identified by the piece they play:
 
@@ -45,7 +47,7 @@ There are exactly two players, identified by the piece they play:
 
 **Mouse moves first.**
 
-## 3. Board and coordinates
+### 2.2 Board and coordinates
 
 - The board is a **5 × 5 grid**.
 - **Rows** are labeled `A`, `B`, `C`, `D`, `E` (top to bottom).
@@ -70,7 +72,7 @@ There are exactly two players, identified by the piece they play:
 Every cell is in exactly one of three states: **empty**, **mouse**, or
 **snake**.
 
-## 4. Lines
+### 2.3 Lines
 
 A **line** is a set of 5 cells that a player must fully occupy to win. 
 There are **12 lines** in total:
@@ -81,7 +83,7 @@ There are **12 lines** in total:
   - Main diagonal: `A1, B2, C3, D4, E5`
   - Anti-diagonal: `A5, B4, C3, D2, E1`
 
-## 5. Setup
+### 2.4 Setup
 
 The board begins **empty except for a single snake at `B3`**. This is the
 starting position, not a move by the Snake player. It counts as a real snake
@@ -89,17 +91,17 @@ piece for all win detection.
 
 Note: `B3` lies on **row B** and **column 3**, and on **neither diagonal**.
 
-## 6. A turn / a move
+### 2.5 A turn / a move
 
 - Players alternate turns, **Mouse first**: Mouse, Snake, Mouse, Snake, ...
 - On a turn, the player makes one **move**, which normally consists of **placing
   two of their own pieces** on **two distinct empty cells**.
 - **Single-piece exception.** A move may instead place a **single** piece, but
   *only* when that one piece **ends the game** — i.e. it completes a line (a win)
-  or fills the board into a cat's game. This mirrors §7: if the first piece
+  or fills the board into a cat's game. This mirrors §2.6 and §2.7: if the first piece
   already ends the game, the second is never placed, so a one-piece move is the
-  honest representation of that turn. Placing a single piece while the game is
-  still in play is a fault (`WRONG_PIECE_COUNT`, §9).
+  honest representation of that turn. Placing a single piece that leaves the game
+  still in play is illegal (§2.8).
 - Placed pieces are permanent; they are never moved or removed.
 
 The board starts with 24 empty cells and 2 pieces are placed per move, so a full
@@ -107,7 +109,7 @@ game is at most 12 moves and the board fills completely with no leftover single
 cell. A player therefore always has at least two empty cells available at the
 start of their turn (until the game ends).
 
-## 7. Winning
+### 2.6 Winning
 
 A player **wins the moment they occupy all 5 cells of any line** (row, column,
 or diagonal) with their own pieces.
@@ -115,10 +117,10 @@ or diagonal) with their own pieces.
 - Win detection happens **after each individual piece placement**. If a player's
   *first* of two pieces completes a line, they win immediately and the second
   piece is not placed. A player that foresees this may submit a **single-piece
-  move** (§6) for that winning piece alone.
+  move** (§2.5) for that winning piece alone.
 - The pre-placed snake at `B3` counts toward the Snake player's lines.
 
-## 8. Cat's game (draw)
+### 2.7 Cat's game (draw)
 
 A **line is dead** once it contains **at least one mouse and at least one
 snake** — it can never be completed by either player.
@@ -129,7 +131,7 @@ possibly win. This can occur before the board is completely full.
 If the board fills completely without a win, that state is necessarily a cat's
 game (every line is dead) and is reported as such.
 
-## 9. Illegal moves
+### 2.8 Illegal moves
 
 A move can be illegal for these reasons:
 
@@ -138,58 +140,25 @@ A move can be illegal for these reasons:
 - the two target cells are the same cell,
 - the wrong number of cells is specified (a move must place one or two pieces), or
 - a **single**-piece move that does **not** end the game (a single piece is legal
-  only when it wins or completes a cat's game — see §6).
+  only when it wins or completes a cat's game — see §2.5).
 
-**Strong typing makes the structural cases unrepresentable.** `Cell` and `Move`
-are validated value types (§10, "Core types"): a `Cell` cannot be constructed
-off-board, and a `Move` cannot be constructed unless it is **one or two** cells
-(and, if two, *distinct*). Attempting either raises `IllegalMove` at
-**construction time**. As a result:
+How illegal moves are detected, surfaced, and attributed to a player is part of
+the player/engine machinery, described in §3.
 
-- **Structural illegality** (off-board, duplicate cells, or a count that is
-  neither one nor two) is caught when a `Cell`/`Move` is *built*, before it ever
-  reaches the engine. A player that builds moves from trusted code (scripted,
-  algorithmic) will simply never hit this. A player that builds moves from
-  **untrusted external output — the LLM player — must catch these construction
-  errors and report them** as faults through the move-production mechanism
-  (`MoveUnavailable`, §10), because only it can associate the failure with a
-  `PlayerFaultReason`.
-- **Stateful illegality** cannot be a type invariant — it depends on the current
-  board — so the **engine** checks it when applying a move and raises
-  `IllegalMove`. There are two such cases: `CELL_NOT_EMPTY` (a target cell is
-  occupied), and `WRONG_PIECE_COUNT` when a **single-piece** move is well-formed
-  but leaves the game *in play* (a single piece is legal only when it ends the
-  game). Structurally, `WRONG_PIECE_COUNT` therefore has **two provenances**:
-  construction-time (zero or three-plus cells) and apply-time (one cell, game not
-  over).
-
-An illegal move is an **error** — never silently ignored or re-prompted. It is
-surfaced by exceptions and handled at two layers:
-
-- **Construction / move application (low level):** raises an `IllegalMove`
-  exception (structural at construction; `CELL_NOT_EMPTY` at engine apply-time).
-  This makes bugs fail loudly in direct unit tests.
-- **Game loop:** catches `IllegalMove` (from applying a move) and the
-  player-reported `MoveUnavailable` (from `choose_move`) and ends the game with a
-  terminal `GameResult` (see §10) whose `termination` is `PLAYER_FAULT`. This is
-  an **error termination with no winner** (`winner = None`) — distinct from a
-  cat's game, and *not* a win for the opponent. The result carries the facts of
-  the fault so agents such as the LLM player can be informed via `end_game`.
-
-## 10. Player abstraction
+## 3. Player abstraction
 
 A player is a **stateful agent** that tracks its own view of the game and chooses
 moves for whichever side it has been assigned. All player types share one
 interface, defined as a Python **abstract base class (ABC)** — chosen over a
 `Protocol` because we own every implementation, want instantiation-time
 enforcement of the contract (an unimplemented method fails loudly, matching the
-error-first stance of §9), and want to share behavior and construction across
+error-first stance of §2.8), and want to share behavior and construction across
 players.
 
 ### Core types
 
 The domain is modeled with validated value types, so illegal states are
-unrepresentable (see §9):
+unrepresentable (see §2.8):
 
 - `Side` — an enum, `MOUSE` or `SNAKE`; `Side.other` gives the opponent. A cell's
   occupant is a `Side` (the side whose piece sits there) or `None` when empty.
@@ -198,15 +167,15 @@ unrepresentable (see §9):
 - `Move` — a frozen dataclass validated at construction to be **one or two
   `Cell`s** (and, if two, distinct), in the order the player plays them. A
   single-cell move is structurally valid but *legal* only when that one piece
-  ends the game; the engine enforces that at apply-time (§9).
+  ends the game; the engine enforces that at apply-time (§2.8).
 
-Constructing an invalid `Cell` or `Move` raises `IllegalMove` (§9).
+Constructing an invalid `Cell` or `Move` raises `IllegalMove` (§2.8).
 
 - **Each player manages its own board state.** A player keeps its own internal
   representation of the board, updated as moves happen. Because of this,
   `choose_move` takes **no state argument** — the player already has it.
 - **The engine keeps the authoritative board.** The engine maintains its own
-  board independently and uses it to validate legality (§9) and detect
+  board independently and uses it to validate legality (§2.8) and detect
   win/cat's-game. The engine's board is the source of truth; a player's private
   board is never trusted for rules enforcement.
 
@@ -214,8 +183,7 @@ Constructing an invalid `Cell` or `Move` raises `IllegalMove` (§9).
 
 A player's side (Mouse or Snake) is **not** fixed at construction; it is assigned
 at the **start of each game**. A single player instance can therefore play many
-games and switch sides between them — required by self-play (RL) and by the
-tournament structure.
+games and switch sides between them.
 
 ### Interface
 
@@ -290,7 +258,7 @@ class MoveChoice:
    and an optional `claimed_outcome`). If instead it raises `MoveUnavailable`,
    the game ends with a `PLAYER_FAULT` result — skip to step 5.
 3. Validate the move against the engine's authoritative board. If it is illegal,
-   the game ends immediately with a `PLAYER_FAULT` result (§9, and "Game results
+   the game ends immediately with a `PLAYER_FAULT` result (§2.8, and "Game results
    and termination" below) — skip to step 5. Otherwise apply it and compute the
    true outcome (win / cat's game / in play). Then, if `claimed_outcome` was
    supplied and disagrees with the true outcome, the game ends with an
@@ -343,7 +311,7 @@ reconstructing it from observed moves.
 The same `Observer` also has **match-level** hooks (`on_match_start`,
 `on_match_end`) and carries an **observation level** — set when the observer is
 constructed — that it uses to gate how much it reports; both are introduced with
-matches (§12). The engine stays level-blind: it always fires every hook, and the
+matches (§5). The engine stays level-blind: it always fires every hook, and the
 observer decides what to act on.
 
 ### Game results and termination
@@ -382,7 +350,7 @@ class PlayerFaultReason(Enum):
                        # move was produced, distinct from garbage output
     # (The LLM sub-spec may refine or add player-reported reasons, e.g. empty
     # response or refusal. A transport timeout is NOT a fault — it is a no-contest
-    # abort, see Termination.ABORTED above and §11.)
+    # abort, see Termination.ABORTED above and §4.)
     # Engine-detected misread: the move is legal, but the player's self-assessed
     # outcome disagrees with the true outcome. `attempted_move` is present, and
     # `claimed_outcome`/`actual_outcome` below are set.
@@ -411,7 +379,7 @@ Notes:
   the opponent.
 - **`ABORTED` is a no-contest, not a fault.** It is reserved for failures that
   are nobody's play — the canonical case being a player's model backend staying
-  unreachable after retries (surfaced as `PlayerUnavailable`, §11). Such a game
+  unreachable after retries (surfaced as `PlayerUnavailable`, §4). Such a game
   is charged to neither side and never appears in the fault tallies; only the
   affected game ends, and the match continues.
 - **`PLAYER_FAULT` covers several kinds of the same underlying failure** — "the
@@ -472,7 +440,7 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 
 The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
-implementation order (the first three are implemented — see the milestones in §16):
+implementation order (the first three are implemented — see the milestones in §9):
 
 1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
@@ -485,7 +453,7 @@ implementation order (the first three are implemented — see the milestones in 
    sparring partner for the stronger players, and a convenient driver for
    non-deterministic tests. Its randomness is drawn from an injectable
    `random.Random`, so a seeded instance produces fully reproducible games.
-3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4`, see §17).
+3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4` — two cells separated by a space).
    So a human is never knocked out by a slip, it **re-prompts** on any locally
    detectable mistake — an unparseable label, the wrong number of cells, an
    off-board or repeated cell, a target already occupied, or a lone piece that
@@ -497,7 +465,7 @@ implementation order (the first three are implemented — see the milestones in 
 4. **LLM player** *(implemented — 0.5)*. Chooses moves by querying a large language
    model via Pydantic AI, with support for a **range of LLM providers and models**
    (Anthropic, OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom
-   endpoints). Specified in full in §11.
+   endpoints). Specified in full in §4.
 5. **Algorithmic player** *(planned)*. Searches the game tree — e.g. alpha–beta (minimax with
    pruning) — to choose strong moves.
 6. **Reinforcement-learning player** *(planned)*. A policy trained via RL (self-play). Likely
@@ -513,13 +481,13 @@ for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
 ### Tournaments
 
 The project **will support a tournament structure** that pits player types against
-each other over many games, composed from **matches** (§12) as its building block.
+each other over many games, composed from **matches** (§5) as its building block.
 This is a committed goal, but its details (pairing schedule, scoring/standings,
 handling of the Snake/Mouse start asymmetry, reporting) warrant their own sub-spec,
 to be written later. This is a **1.0** goal, not part of the current 0.x line (see
-§16).
+§9).
 
-## 11. The LLM player
+## 4. The LLM player
 
 The **LLM player** chooses its moves by querying a large language model. It is the
 player type this project exists to compare: pitting models against one another (and
@@ -541,7 +509,7 @@ features carry the design:
 - **A single running message thread.** The player keeps one conversation that
   **spans every game it plays** — not one per game. The model thus accumulates
   context across games (including how earlier games ended), which is what lets it
-  learn from a mistake with no change to the `Player` interface (§10, "Feedback
+  learn from a mistake with no change to the `Player` interface (§3, "Feedback
   across games"). The thread is **in-memory for the life of the player instance**; it
   is not persisted across processes.
 
@@ -559,7 +527,7 @@ class LLMMove(BaseModel):
 - **`cells`** are turned into a `Move` via `Move.from_labels(*cells)`. If that cannot
   form a well-formed move — an unparseable label, an off-board or duplicated cell, or
   the wrong number of cells — the player catches the `ValueError` / `IllegalMove` and
-  raises `MoveUnavailable` with the matching reason (§10, "Game results and
+  raises `MoveUnavailable` with the matching reason (§3, "Game results and
   termination"), ending the game as a `PLAYER_FAULT`. Cells that are well-formed but
   *illegal against the current board* (already occupied, or a lone piece that does
   not end the game) are caught by the engine at apply-time — the same fault, detected
@@ -568,7 +536,7 @@ class LLMMove(BaseModel):
   `MoveChoice.claimed_outcome` mechanical players may omit): the model must state,
   every turn, whether it believes the move wins, draws, or leaves the game in play.
   Recognizing the outcome is part of the reasoning test, so a wrong claim is a
-  `WRONG_OUTCOME_CLAIM` fault (§10). The parsed move and this claim become the
+  `WRONG_OUTCOME_CLAIM` fault (§3). The parsed move and this claim become the
   `MoveChoice` the player returns.
 - **`move_rationale`** is a brief, human-readable justification — a *summary* of why
   the model chose its move, not its full chain of thought. It is **log-only**: never
@@ -587,7 +555,7 @@ the next user turn on the following `choose_move`.
   exactly the structured fields above; you see only your opponent's moves and must
   track the board yourself).
 - **`start_game(side)`** enqueues a "you are playing {side} this game" message. Per
-  §10 it also prepends any stored feedback from a game the player faulted.
+  §3 it also prepends any stored feedback from a game the player faulted.
 - **`observe_move(side, move)`** — for the **opponent's** move, enqueues "opponent
   played {move}"; for the player's **own** move it is a no-op (that move is already
   present as the model's own prior structured response).
@@ -600,7 +568,7 @@ the next user turn on the following `choose_move`.
     on their own turn — in that case the player never got a `choose_move` to be told
     that move, so the thread would otherwise be missing it;
   - if **the player itself faulted**, what it did wrong and how to avoid repeating it,
-    composed from the fault detail (§10, "Whoever reports, reports only the facts").
+    composed from the fault detail (§3, "Whoever reports, reports only the facts").
 
 ### Pruning re-sent reasoning from the request
 
@@ -641,7 +609,7 @@ moves are legal or how faults are scored.
 ### No retries
 
 An illegal or unusable move **ends the game** — no retries, no re-prompting within a
-game (contrast the human player, §10, which re-prompts a person). The consequence is
+game (contrast the human player, §3, which re-prompts a person). The consequence is
 delivered to the model as feedback in the *next* game's opening messages, not
 mid-game. This makes "does the model play legal, well-assessed moves" a scored
 property of the benchmark rather than something the harness papers over.
@@ -649,7 +617,7 @@ property of the benchmark rather than something the harness papers over.
 (Transient *transport* failures — read/connect timeouts, dropped connections — are a
 separate, operational concern, not a player fault. The LLM player retries the call a
 few times with exponential backoff; if the backend stays unreachable it raises
-`PlayerUnavailable`, and the engine ends that game as a no-contest (`ABORTED`, §10)
+`PlayerUnavailable`, and the engine ends that game as a no-contest (`ABORTED`, §3)
 without charging the player or aborting the match. This is distinct from a
 *configuration* failure — a misspelled/unavailable model, a rejected key — which no
 retry fixes and which aborts the whole run with a clear message, not a game outcome.)
@@ -687,7 +655,7 @@ AI, so none needs extra endpoint configuration; we resolve `(provider, model)` t
 appropriate Pydantic AI model. Custom providers are OpenAI-compatible endpoints
 reached at a configured base URL.
 
-Three sources of configuration, parsed **outside** the player (§14, Architecture):
+Three sources of configuration, parsed **outside** the player (§7, Architecture):
 
 - **`players.yaml`** — the roster of available players. Each entry is a free-form
   **name** (its identity in matches and standings, independent of the model — in
@@ -803,13 +771,13 @@ still outgrows the model's context window over a long match — re-sent reasonin
 already pruned from requests (see "Pruning re-sent reasoning"), which slows that
 growth but does not by itself cap it.
 
-## 12. Matches
+## 5. Matches
 
 A **match** is two fixed players playing a sequence of games. It is the unit that
 makes inter-player — especially inter-LLM — comparison meaningful, and because the
 two `Player` instances **persist across all the games**, it is also what lets the
-LLM player carry feedback from one game into the next (§10, "Feedback across games";
-§11). Matches are the building block of the eventual tournament structure (§10,
+LLM player carry feedback from one game into the next (§3, "Feedback across games";
+§4). Matches are the building block of the eventual tournament structure (§3,
 "Tournaments"), which is deferred; matches themselves are part of the road to 1.0.
 
 ### Definition
@@ -854,12 +822,12 @@ standings belong to tournaments and are deferred.
 
 ### Observation levels
 
-Observation generalizes from a single game to the whole match. The `Observer` (§10)
+Observation generalizes from a single game to the whole match. The `Observer` (§3)
 gains two match-level hooks alongside its game/move hooks:
 
 ```python
 class Observer:                 # ... on_game_start / on_move_start / on_move_end /
-                                #     on_game_end from §10 ...
+                                #     on_game_end from §3 ...
     def on_match_start(self, names: dict[Side, str], num_games: int) -> None: ...
     def on_match_end(self, result: MatchResult) -> None: ...
 ```
@@ -884,21 +852,21 @@ only thing that ever waits for input is a human player taking its own turn. Beca
 a human must see the board to play, **if either player is human the CLI builds the
 observer at `MOVE`** (a coarser request is overridden, with a message).
 
-## 13. Interface
+## 6. Interface
 
 A **text CLI**:
 
-- Prints the board (ASCII, as in §3) with mice and snakes shown as distinct
+- Prints the board (ASCII, as in §2.2) with mice and snakes shown as distinct
   emoji: 🐭 (mouse) and 🐍 (snake).
 - Reports whose turn it is, the move played, and the outcome
   (`Mouse wins`, `Snake wins`, or `Cat's game`).
-- **Watches play at a chosen level.** The CLI attaches an `Observer` (§10) whose
+- **Watches play at a chosen level.** The CLI attaches an `Observer` (§3) whose
   **observation level** (`--watch`, default `move`) sets the detail — `match`,
-  `game`, or `move` (§12). There is no artificial pausing; only a human player's
+  `game`, or `move` (§5). There is no artificial pausing; only a human player's
   own input paces the game.
 - **Runs a match.** `--mouse` and `--snake` each name who plays that side —
-  `random`, `human`, or an **LLM roster name** from `players.yaml` (§11); `--games
-  N` (default 1) sets the match length, with sides fixed for the match (§12). If
+  `random`, `human`, or an **LLM roster name** from `players.yaml` (§4); `--games
+  N` (default 1) sets the match length, with sides fixed for the match (§5). If
   either player is human the level is forced to `move` (with a message), since a
   human must see the board. E.g. `snakes-and-mice --mouse human --snake random`
   plays a single game as Mouse, and `snakes-and-mice --mouse opus --snake gpt5
@@ -906,9 +874,9 @@ A **text CLI**:
   game.
 - **Logs LLM conversations (debugging).** `--log-llm [DIR]` (off by default) dumps
   each LLM player's full raw message thread as JSON, for inspecting how a model
-  reasoned (§11, "Message logging"). A no-op for non-LLM players.
+  reasoned (§4, "Message logging"). A no-op for non-LLM players.
 
-## 14. Architecture (proposed)
+## 7. Architecture (proposed)
 
 Rough module layout (subject to change once we start coding):
 
@@ -919,21 +887,21 @@ Rough module layout (subject to change once we start coding):
 - `observer` — the `Observer` spectator interface and the `ObservationLevel` that
   an observer uses to gate its own output; depends on neither `game` nor `match`,
   so both can drive it without a cycle.
-- `match` — runs a match: a sequence of games between two fixed players (§12),
+- `match` — runs a match: a sequence of games between two fixed players (§5),
   reusing the same instances so LLM feedback carries across games, and producing a
   `MatchResult`. Tournaments will compose matches in their own module later;
   together these form the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
-  human, and — per §11 — the LLM player). Loading the LLM roster from
+  human, and — per §4 — the LLM player). Loading the LLM roster from
   `players.yaml` / `providers.yaml` / `.env` lives in a small config module
   alongside it, keeping YAML parsing out of the player itself.
 - `cli` — rendering the board, reporting outcomes, and watching play via an
-  `Observer` at a selectable observation level (§12).
+  `Observer` at a selectable observation level (§5).
 
 Data types to nail down when we build: cell coordinate, piece/player enum,
 board, move (a pair of cells), and game result.
 
-## 15. Tech stack & tooling
+## 8. Tech stack & tooling
 
 - **Language:** Python.
 - **Environment & dependencies:** `uv`.
@@ -943,7 +911,7 @@ board, move (a pair of cells), and game result.
   OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom endpoints), with
   structured output and a unified thinking/effort control. Roster and provider
   config load from YAML (`pyyaml`); API keys come from the environment
-  (`python-dotenv`, a `.env` file). See §11.
+  (`python-dotenv`, a `.env` file). See §4.
 - **Strong typing.** Use static typing wherever possible: complete type hints on
   all public functions, methods, and data structures; `enum`s and (frozen)
   `dataclass`es for domain types (as already used for `Side`, `Move`,
@@ -951,7 +919,7 @@ board, move (a pair of cells), and game result.
   checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
   strict configuration.
 
-## 16. Versioning & scope
+## 9. Versioning & scope
 
 The project follows [Semantic Versioning](https://semver.org/); the version in
 `pyproject.toml` tracks capability milestones. The purpose of the project — an
@@ -964,19 +932,19 @@ progress toward that, not incidental churn.
   - **0.1** — the game engine and rules, the scripted player, and the text CLI.
   - **0.2** — the random player and turn-by-turn game observation.
   - **0.3** — the interactive human player.
-  - **0.4** — matches (§12): two fixed players over a sequence of games with
+  - **0.4** — matches (§5): two fixed players over a sequence of games with
     tallied results, the generalized `Observer` with `ObservationLevel`, and the
     `--games` / `--watch` CLI.
-  - **0.5** — the **LLM player** (§11): moves chosen by a model via Pydantic AI
+  - **0.5** — the **LLM player** (§4): moves chosen by a model via Pydantic AI
     across a range of providers, a single cross-game message thread with
     feedback, structured output with fault mapping, YAML roster / provider config
     (keys in `.env`), the `--mouse`/`--snake` roster names, and `--log-llm`
     message logging. *(current)*
-- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§11,
-  landed in 0.5) can be driven by the **tournament structure** (§10): only then
+- **1.0 — first genuinely useful release.** Reached when the **LLM player** (§4,
+  landed in 0.5) can be driven by the **tournament structure** (§3): only then
   can the project do what it exists to do — pit LLMs against each other, and
   against strong non-LLM players, over many games and score them. Other 0.x
-  milestones (e.g. a heuristic or MCTS player, §10) may ship first, but **1.0 is
+  milestones (e.g. a heuristic or MCTS player, §3) may ship first, but **1.0 is
   defined by the LLM-player + tournament pair**, regardless of what else arrives
   before it.
 - **After 1.0**, standard SemVer applies: incompatible changes to the player API
@@ -984,18 +952,10 @@ progress toward that, not incidental churn.
   fixes bump the patch.
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
-changes, as the `Player` abstraction (§10) is designed to allow.
+changes, as the `Player` abstraction (§3) is designed to allow.
 
 Out of scope until at least 1.0, and possibly beyond:
 
 - Game-balance analysis (whether Snake or Mouse is favored given the `B3` start).
 - Any GUI/TUI.
 - Network/remote play.
-
-## 17. Resolved decisions
-
-- **Row orientation:** `A` is the top row, `E` is the bottom.
-- **Illegal-move handling:** the engine raises an error (see §9).
-- **Piece glyphs:** 🐭 mouse, 🐍 snake.
-- **Move input format** (for the future human player): two cells separated by a
-  space, e.g. `C3 D4`.
