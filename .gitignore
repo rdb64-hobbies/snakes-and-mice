@@ -37,6 +37,9 @@ providers.yaml
 # LLM message-thread logs (--log-llm), a local debugging artifact
 llm-logs/
 
+# Tournament results (§6), accumulated locally by play-match/play-tournament-matches
+tournament-results.jsonl
+
 # OS / editor cruft
 .DS_Store
 *.swp
