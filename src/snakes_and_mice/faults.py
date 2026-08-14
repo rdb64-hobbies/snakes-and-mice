@@ -86,3 +86,13 @@ class PlayerUnavailable(SnakesAndMiceError):
     no usable move), and provider errors that abort the whole run (a bad model
     name or rejected key — a configuration problem, not a transient one).
     """
+
+
+class TournamentError(SnakesAndMiceError):
+    """A tournament schedule, results file, or set of standings could not be built.
+
+    Raised by the tournament subsystem — e.g. a subset names a player not in the
+    roster (:mod:`schedule`) or a results-file line is malformed (:mod:`serialize`).
+    It lives here, with the other exceptions, so those modules can share it without
+    depending on one another.
+    """

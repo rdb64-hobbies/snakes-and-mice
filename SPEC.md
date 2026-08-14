@@ -1038,11 +1038,13 @@ Rough module layout (subject to change once we start coding):
 - `match` — runs a match: a sequence of games between two fixed players (§5),
   reusing the same instances so LLM feedback carries across games, and producing a
   `MatchResult`.
-- `tournament` — the tournament logic (§6), independent of any CLI: the pure
-  **schedule builder** (subsets + roster order → the ordered `(mouse, snake)` name
-  pairs), reading/writing the JSON-Lines **results file** (the documented
-  `MatchResult` encoding), and the per-player **tally** that produces standings.
-  Together with `match` and `game` this forms the "engine" that drives play.
+- **Tournament logic** (§6) — three independent, CLI-free modules, joined only by
+  the shared results file: `schedule` (the pure **schedule builder**: subsets +
+  roster order → the ordered `(mouse, snake)` name pairs), `serialize`
+  (reading/writing the JSON-Lines **results file** — the documented, round-tripping
+  `MatchResult` encoding, kept out of `result` so those types stay pure data), and
+  `tally` (aggregating results into per-player standings and ordering them).
+  Together with `match` and `game` these form the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
   human, and — per §4 — the LLM player). Loading the LLM roster from
   `players.yaml` / `providers.yaml` / `.env` lives in a small config module
