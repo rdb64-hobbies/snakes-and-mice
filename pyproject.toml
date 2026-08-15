@@ -3,6 +3,8 @@ name = "snakes-and-mice"
 version = "1.2.0"
 description = "Snakes and Mice — a game engine and pluggable players, used as an LLM reasoning benchmark"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "rdb64-hobbies", email = "bobby@blumofe.net" }
 ]
