@@ -29,6 +29,18 @@ CAT_GLYPH: str = "🐱"  # a cat's game (draw) — the most common outcome
 EMPTY: str = "·"
 _CELL_WIDTH: int = 2
 
+# The name the CLI gives a human player (see cli_common.make_player). It is
+# rendered in the second person, so a present-tense verb about this player takes
+# the base form ("You win") rather than the third-person "-s" form ("Opus wins").
+SECOND_PERSON: str = "You"
+
+
+def _present_tense(name: str, verb: str) -> str:
+    """Conjugate a regular present-tense ``verb`` to agree with its subject
+    ``name``: the base form for the second-person :data:`SECOND_PERSON` (``you
+    win``), the ``-s`` form for any other (third-person) name (``Opus wins``)."""
+    return verb if name == SECOND_PERSON else f"{verb}s"
+
 
 def _cell_token(board: Board, cell: Cell) -> str:
     """A two-display-column token for one cell: the piece emoji, or a padded dot."""
@@ -58,7 +70,8 @@ def describe_game_result(result: GameResult, players: dict[Side, str]) -> str:
     """A one-line human-readable summary of a game result."""
     if result.termination is Termination.LINE_COMPLETED:
         assert result.winner is not None
-        return f"{players[result.winner]} ({result.winner.value}) wins."
+        name: str = players[result.winner]
+        return f"{name} ({result.winner.value}) {_present_tense(name, 'win')}."
     if result.termination is Termination.CATS_GAME:
         return "Cat's game — a draw."
     if result.termination is Termination.ABORTED:
@@ -310,7 +323,9 @@ class ConsoleObserver(Observer):
     ) -> None:
         if self.level < ObservationLevel.MOVE:
             return
-        print(f"  plays {move}:\n")
+        # The subject ("Turn N — {name} … to move…") was printed by on_move_start;
+        # this continues that sentence, so the verb agrees with that player's name.
+        print(f"  {_present_tense(self._names[side], 'play')} {move}:\n")
         print(render_board(board))
 
     def on_game_end(self, result: GameResult) -> None:

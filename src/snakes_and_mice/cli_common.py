@@ -16,7 +16,7 @@ import random
 from pathlib import Path
 
 from .config import Roster, make_llm_player
-from .console import ConsoleObserver
+from .console import ConsoleObserver, SECOND_PERSON
 from .core import Cell, Side
 from .faults import IllegalMove
 from .observer import ObservationLevel, Observer
@@ -59,7 +59,7 @@ def make_player(
     """Build the player for one side. ``kind`` is ``random``, ``human``, or an
     LLM roster name (in which case ``roster`` must be loaded)."""
     if kind == "human":
-        return HumanPlayer(name="You")
+        return HumanPlayer(name=SECOND_PERSON)
     if kind == "random":
         return RandomPlayer(name=RANDOM_NAME[side])
     assert roster is not None  # a roster is loaded whenever an LLM name is used

@@ -18,6 +18,8 @@ from snakes_and_mice import (
 )
 from snakes_and_mice.console import (
     ConsoleObserver,
+    SECOND_PERSON,
+    describe_game_result,
     describe_match_result,
     render_fault_tally,
     render_standings,
@@ -242,6 +244,19 @@ def test_game_start_announces_the_seed_cell(
     out = capsys.readouterr().out
 
     assert "Snake seeded at D4." in out
+
+
+def test_win_verb_agrees_with_the_winner_name() -> None:
+    # Third-person names take "wins"; the second-person human name takes "win".
+    win: GameResult = GameResult(Termination.LINE_COMPLETED, winner=Side.MOUSE)
+    assert (
+        describe_game_result(win, {Side.MOUSE: "Opus", Side.SNAKE: "gpt5"})
+        == "Opus (mouse) wins."
+    )
+    assert (
+        describe_game_result(win, {Side.MOUSE: SECOND_PERSON, Side.SNAKE: "gpt5"})
+        == f"{SECOND_PERSON} (mouse) win."
+    )
 
 
 def test_single_game_omits_match_scaffolding(
