@@ -17,15 +17,13 @@ from .cli_common import (
     DEFAULT_LOG_DIR,
     DEFAULT_RESULTS_PATH,
     add_watch_argument,
+    make_observer,
     make_player,
-    observation_level,
     quiet_http_logging,
 )
 from .config import ConfigError, Roster, load_environment, load_roster
-from .console import ConsoleObserver
 from .core import Side
 from .match import play_match
-from .observer import ObservationLevel
 from .players import ModelRequestError, Player
 from .result import MatchResult
 from .serialize import append_match_result
@@ -100,12 +98,15 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(str(exc))
 
     has_human: bool = "human" in (args.mouse, args.snake)
-    level: ObservationLevel = observation_level(args.watch)
-    if has_human and level < ObservationLevel.MOVE:
+    watch: str = args.watch
+    if has_human and watch != "move":
+        # A human needs to see the board to move, so force full per-move display.
         print("(a human is playing — showing every move)\n")
-        level = ObservationLevel.MOVE
+        watch = "move"
     try:
-        result: MatchResult = play_match(mouse, snake, args.games, ConsoleObserver(level))
+        result: MatchResult = play_match(
+            mouse, snake, args.games, make_observer(watch)
+        )
     except ModelRequestError as exc:
         # A provider call failed mid-game (e.g. an unavailable model); report it
         # as a clean message instead of an escaping traceback.

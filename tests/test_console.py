@@ -22,6 +22,7 @@ from snakes_and_mice.console import (
     render_fault_tally,
     render_standings,
 )
+from snakes_and_mice.board import Board
 from snakes_and_mice.core import Move, Side
 from snakes_and_mice.faults import PlayerFaultReason
 from snakes_and_mice.result import (
@@ -66,12 +67,12 @@ def test_watch_game_shows_boundaries_not_moves(
     play_match(mouse, snake, 2, ConsoleObserver(ObservationLevel.GAME))
     out = capsys.readouterr().out
 
-    assert "Turn 1" not in out  # per-move narration suppressed
+    assert "plays" not in out  # the played-move narration is suppressed
     assert "1  2  3  4  5" not in out  # and the board grid is not rendered
     assert "=== Game 1 of 2 ===" in out  # but game headers are shown
+    assert "to move…" in out  # an in-place per-turn status line
     assert "(mouse) wins." in out  # and per-game results
     assert "Match complete" in out  # and the closing tally
-    assert "..." in out  # and a single line of per-move progress dots
 
 
 def test_watch_match_shows_only_banner_and_tally(
@@ -83,10 +84,49 @@ def test_watch_match_shows_only_banner_and_tally(
 
     assert "🐭 Mouse:" in out  # opening banner
     assert "Match complete" in out  # closing tally
-    assert ".." in out  # a per-game progress dot per finished game, on one line
+    assert "now in play" in out  # an in-place per-game status line
+    assert "🐭 1" in out  # a running scoreboard rides that line
+    assert "last game: mouse won" in out  # as does the previous game's outcome
+    assert "faults" not in out  # a clean match keeps the scoreboard terse
     assert "Turn 1" not in out  # no per-move narration
     assert "=== Game" not in out  # no per-game headers
     assert "(mouse) wins." not in out  # no per-game results
+
+
+def test_match_scoreboard_grows_only_for_outcomes_that_occur(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Drive the MATCH-level status line directly with one game of each outcome,
+    # then start a further game so its status line reflects the full tally.
+    names: dict[Side, str] = {Side.MOUSE: "M", Side.SNAKE: "S"}
+    board: Board = Board()
+    def fault(side: Side) -> GameResult:
+        return GameResult(
+            Termination.PLAYER_FAULT,
+            fault=PlayerFaultDetail(side, PlayerFaultReason.UNPARSEABLE_OUTPUT),
+        )
+
+    results: list[GameResult] = [
+        GameResult(Termination.LINE_COMPLETED, winner=Side.MOUSE),
+        GameResult(Termination.LINE_COMPLETED, winner=Side.SNAKE),
+        GameResult(Termination.CATS_GAME),
+        fault(Side.MOUSE),
+        fault(Side.MOUSE),  # a second, to show a plural per-side fault count
+        GameResult(Termination.ABORTED, error="backend unreachable"),
+    ]
+
+    observer: ConsoleObserver = ConsoleObserver(ObservationLevel.MATCH)
+    observer.on_match_start(names, len(results) + 1)
+    for result in results:
+        observer.on_game_start(names, board)
+        observer.on_game_end(result)
+    observer.on_game_start(names, board)  # its status line shows the full tally
+    out: str = capsys.readouterr().out
+
+    # Wins and cat's games always; a side's faults ride its own win token (per
+    # side, only once it faulted); aborts append only once they occur.
+    assert "🐭 1 (and 2 faults)  🐍 1  🐱 1  aborted 1" in out
+    assert "last game: no contest" in out  # the terse phrase for the last game
 
 
 def _fault(offender: Side, reason: PlayerFaultReason) -> GameResult:

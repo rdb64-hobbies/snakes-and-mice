@@ -20,16 +20,14 @@ from pathlib import Path
 from .cli_common import (
     DEFAULT_RESULTS_PATH,
     add_watch_argument,
+    make_observer,
     make_player,
-    observation_level,
     quiet_http_logging,
 )
 from .config import ConfigError, Roster, load_environment, load_roster
-from .console import ConsoleObserver
 from .core import Side
 from .faults import TournamentError
 from .match import play_match
-from .observer import ObservationLevel
 from .players import ModelRequestError, Player
 from .result import MatchResult
 from .schedule import (
@@ -120,7 +118,6 @@ def main(argv: list[str] | None = None) -> None:
     if not schedule:
         parser.error("the selected subsets produce no matches to play")
 
-    level: ObservationLevel = observation_level(args.watch)
     total: int = len(schedule)
     try:
         for index, (mouse_name, snake_name) in enumerate(schedule, start=1):
@@ -128,7 +125,10 @@ def main(argv: list[str] | None = None) -> None:
                   f"vs {snake_name} (snake) ###")
             mouse: Player = make_player(mouse_name, Side.MOUSE, roster, None)
             snake: Player = make_player(snake_name, Side.SNAKE, roster, None)
-            result: MatchResult = play_match(mouse, snake, args.games, ConsoleObserver(level))
+            # A fresh observer per match, so its counters and scoreboard reset.
+            result: MatchResult = play_match(
+                mouse, snake, args.games, make_observer(args.watch)
+            )
             append_match_result(result, results_path)
     except ConfigError as exc:
         parser.error(str(exc))

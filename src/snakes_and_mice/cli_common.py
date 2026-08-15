@@ -15,8 +15,9 @@ import logging
 from pathlib import Path
 
 from .config import Roster, make_llm_player
+from .console import ConsoleObserver
 from .core import Side
-from .observer import ObservationLevel
+from .observer import ObservationLevel, Observer
 from .players import HumanPlayer, Player, RandomPlayer
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
@@ -24,7 +25,7 @@ DEFAULT_LOG_DIR: str = "llm-logs"
 DEFAULT_RESULTS_PATH: Path = Path("tournament-results.jsonl")
 """Where the tournament results file (§6) lives unless a command overrides it."""
 
-WATCH_CHOICES: tuple[str, ...] = ("match", "game", "move")
+WATCH_CHOICES: tuple[str, ...] = ("none", "match", "game", "move")
 
 # HTTP/SDK client loggers that would otherwise print a per-request line (an httpx
 # "HTTP Request: POST ..." INFO, or an Anthropic request-id DEBUG) into the middle
@@ -62,13 +63,29 @@ def make_player(
 
 
 def add_watch_argument(parser: argparse.ArgumentParser, *, default: str) -> None:
-    """Add the shared ``--watch match|game|move`` option (§5) with ``default``."""
+    """Add the shared ``--watch none|match|game|move`` option (§5) with ``default``."""
     parser.add_argument(
         "--watch", choices=list(WATCH_CHOICES), default=default,
-        help=f"how much to show: match, game, or every move (default: {default})",
+        help="how much to show: nothing, match, game, or every move "
+             f"(default: {default})",
     )
 
 
 def observation_level(watch: str) -> ObservationLevel:
-    """Map a ``--watch`` choice string to its :class:`ObservationLevel`."""
+    """Map a ``--watch`` choice string to its :class:`ObservationLevel`.
+
+    Only the watching levels map here; ``none`` has no level (it means no
+    observer at all) and is handled by :func:`make_observer`.
+    """
     return ObservationLevel[watch.upper()]
+
+
+def make_observer(watch: str) -> Observer | None:
+    """The console observer for a ``--watch`` choice, or ``None`` for ``none``.
+
+    ``none`` maps to no observer at all, so the engine runs down its existing
+    "no watcher" path and stays silent — cleaner than a do-nothing observer.
+    """
+    if watch == "none":
+        return None
+    return ConsoleObserver(observation_level(watch))

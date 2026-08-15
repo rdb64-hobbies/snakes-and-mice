@@ -25,6 +25,7 @@ from .tally import PlayerStanding, StandingsSort
 # with a trailing space. Header labels and the row-label margin are sized to
 # match (two columns each, joined by a single-space gutter).
 GLYPH: dict[Side, str] = {Side.MOUSE: "🐭", Side.SNAKE: "🐍"}
+CAT_GLYPH: str = "🐱"  # a cat's game (draw) — the most common outcome
 EMPTY: str = "·"
 _CELL_WIDTH: int = 2
 
@@ -224,10 +225,13 @@ class ConsoleObserver(Observer):
     :class:`~snakes_and_mice.observer.ObservationLevel` it was built with —
     ``move`` shows every turn, ``game`` just each game's board and result, and
     ``match`` only the opening banner and the closing tally. The two coarser
-    levels also show a single line of dots for progress: ``game`` a dot per move
-    within a game, ``match`` a dot per finished game. Per-game
-    bookkeeping (the game counter, the turn counter) is kept up to date at every
-    level, so it is correct whenever a finer level does render. It never pauses:
+    levels show progress on a single line that is rewritten in place as play
+    advances (a carriage return plus an erase-to-end-of-line) and finally
+    overwritten by what comes next: ``game`` shows the turn now in play, replaced
+    by the game result; ``match`` shows the game now in play alongside a running
+    scoreboard and the previous game's outcome, replaced by the final tally. The
+    game and turn counters advance as the match runs, so any line that renders
+    them shows the right number. It never pauses:
     with a human player, that player's own input paces the game; otherwise play
     runs straight through.
     """
@@ -238,6 +242,15 @@ class ConsoleObserver(Observer):
         self._num_games: int = 1
         self._game: int = 0
         self._turn: int = 0
+        # Running match tallies for the MATCH-level scoreboard, accrued in
+        # on_game_end. Wins and cat's games are always shown; a side's fault count
+        # rides its win token only when it has faulted, and aborts only when they
+        # occur (see _scoreboard), so a clean match stays terse.
+        self._wins: dict[Side, int] = {Side.MOUSE: 0, Side.SNAKE: 0}
+        self._faults: dict[Side, int] = {Side.MOUSE: 0, Side.SNAKE: 0}
+        self._cats: int = 0
+        self._aborts: int = 0
+        self._last_outcome: str = ""  # terse phrase for the just-finished game
 
     def on_match_start(self, names: dict[Side, str], num_games: int) -> None:
         self._names = names
@@ -252,6 +265,20 @@ class ConsoleObserver(Observer):
         self._game += 1
         self._turn = 0
         if self.level < ObservationLevel.GAME:
+            if self._num_games > 1:
+                # MATCH level: a single status line, rewritten in place each game
+                # (\r returns to the line start; \x1b[K clears any leftover) and
+                # finally overwritten by the tally in on_match_end — so match
+                # progress shows without scrolling any per-game detail. It carries
+                # a running scoreboard and the previous game's outcome, both of
+                # which stay readable for the whole of the game now in play.
+                status: str = (
+                    f"Game {self._game} of {self._num_games} now in play"
+                    f" — {self._scoreboard()}"
+                )
+                if self._last_outcome:
+                    status += f" — last game: {self._last_outcome}"
+                print(f"\r{status}\x1b[K", end="", flush=True)
             return
         if self._num_games > 1:
             print(f"\n=== Game {self._game} of {self._num_games} ===")
@@ -263,35 +290,79 @@ class ConsoleObserver(Observer):
             print(render_board(board))
 
     def on_move_start(self, side: Side, board: Board) -> None:
-        if self.level < ObservationLevel.MOVE:
+        if self.level < ObservationLevel.GAME:
             return
         self._turn += 1
+        line: str = f"Turn {self._turn} — {self._names[side]} ({side.value}) to move…"
         # Printed before the move is produced, so a slow player (e.g. an LLM)
-        # visibly "thinks" here before on_move_end reports what it played.
-        print(f"\nTurn {self._turn} — {self._names[side]} ({side.value}) to move…")
+        # visibly "thinks" here before the move resolves. At MOVE level each turn
+        # scrolls into its own narration; at GAME level it is a single status line
+        # rewritten in place each move (\r + \x1b[K), then overwritten by the game
+        # result in on_game_end.
+        if self.level >= ObservationLevel.MOVE:
+            print(f"\n{line}")
+        else:
+            print(f"\r{line}\x1b[K", end="", flush=True)
 
     def on_move_end(
         self, side: Side, move: Move, board: Board, outcome: TurnOutcome
     ) -> None:
-        if self.level >= ObservationLevel.MOVE:
-            print(f"  plays {move}:\n")
-            print(render_board(board))
-        elif self.level == ObservationLevel.GAME:
-            # One dot per move, on a single line, so a game's progress is visible
-            # without the full per-move narration. The line is terminated by the
-            # leading newline of the game result in on_game_end.
-            print(".", end="", flush=True)
+        if self.level < ObservationLevel.MOVE:
+            return
+        print(f"  plays {move}:\n")
+        print(render_board(board))
 
     def on_game_end(self, result: GameResult) -> None:
-        if self.level >= ObservationLevel.GAME:
-            print(f"\n{describe_game_result(result, self._names)}")
-        elif self._num_games > 1:
-            # MATCH level: one dot per finished game, on a single line, so match
-            # progress is visible without any per-game detail. The line is
-            # terminated by the leading newline of the tally in on_match_end
-            # (which runs on the same num_games > 1 condition).
-            print(".", end="", flush=True)
+        self._record(result)
+        if self.level < ObservationLevel.GAME:
+            return
+        summary: str = describe_game_result(result, self._names)
+        if self.level >= ObservationLevel.MOVE:
+            print(f"\n{summary}")
+        else:
+            # GAME level: overwrite the in-place move-status line with the result.
+            print(f"\r\x1b[K{summary}")
+
+    def _record(self, result: GameResult) -> None:
+        """Fold a finished game into the running MATCH-level tallies and note its
+        outcome as a terse phrase for the scoreboard's ``last:`` segment."""
+        if result.termination is Termination.LINE_COMPLETED:
+            assert result.winner is not None
+            self._wins[result.winner] += 1
+            self._last_outcome = f"{result.winner.value} won"
+        elif result.termination is Termination.CATS_GAME:
+            self._cats += 1
+            self._last_outcome = "cat's game"
+        elif result.termination is Termination.PLAYER_FAULT:
+            assert result.fault is not None
+            self._faults[result.fault.offender] += 1
+            self._last_outcome = f"{result.fault.offender.value} faulted"
+        else:  # Termination.ABORTED
+            self._aborts += 1
+            self._last_outcome = "no contest"
+
+    def _scoreboard(self) -> str:
+        """The running tally for the MATCH-level status line: each side's wins
+        (with its own fault count in parentheses once it has faulted) and the
+        cat's-game count, then aborts only once they occur — so a clean match
+        reads as three counts and never grows cluttered."""
+        parts: list[str] = []
+        for side in (Side.MOUSE, Side.SNAKE):
+            token: str = f"{GLYPH[side]} {self._wins[side]}"
+            faults: int = self._faults[side]
+            if faults:
+                token += f" (and {faults} {'fault' if faults == 1 else 'faults'})"
+            parts.append(token)
+        parts.append(f"{CAT_GLYPH} {self._cats}")
+        if self._aborts:
+            parts.append(f"aborted {self._aborts}")
+        return "  ".join(parts)
 
     def on_match_end(self, result: MatchResult) -> None:
-        if self._num_games > 1:
+        if self._num_games <= 1:
+            return
+        if self.level < ObservationLevel.GAME:
+            # MATCH level: overwrite the in-place game-status line with the tally.
+            print(f"\r\x1b[K{describe_match_result(result)}")
+        else:
             print(f"\n{describe_match_result(result)}")

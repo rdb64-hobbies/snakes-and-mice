@@ -14,8 +14,19 @@ from pathlib import Path
 
 import pytest
 
+from snakes_and_mice.cli_common import make_observer
+from snakes_and_mice.console import ConsoleObserver
 from snakes_and_mice.match_cli import main
+from snakes_and_mice.observer import ObservationLevel
 from snakes_and_mice.serialize import read_match_results
+
+
+def test_make_observer_maps_none_to_no_observer() -> None:
+    # "none" means no observer at all; the other choices build a ConsoleObserver.
+    assert make_observer("none") is None
+    observer = make_observer("game")
+    assert isinstance(observer, ConsoleObserver)
+    assert observer.level is ObservationLevel.GAME
 
 
 def test_main_quiets_http_request_logging(
@@ -49,3 +60,16 @@ def test_records_one_line_when_flag_given(tmp_path: Path) -> None:
     recorded = read_match_results(results)
     assert len(recorded) == 1
     assert recorded[0].num_games == 3
+
+
+def test_watch_none_runs_the_match_but_shows_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    results: Path = tmp_path / "results.jsonl"
+    main(["--watch", "none", "--games", "2", "--tournament-results", str(results)])
+    out: str = capsys.readouterr().out
+    # No observer output at all — not even the opening banner.
+    assert "Snakes and Mice" not in out
+    assert "Match complete" not in out
+    # But the match still ran and was recorded.
+    assert len(read_match_results(results)) == 1
