@@ -71,6 +71,7 @@ def test_watch_game_shows_boundaries_not_moves(
     assert "=== Game 1 of 2 ===" in out  # but game headers are shown
     assert "(mouse) wins." in out  # and per-game results
     assert "Match complete" in out  # and the closing tally
+    assert "..." in out  # and a single line of per-move progress dots
 
 
 def test_watch_match_shows_only_banner_and_tally(
@@ -82,6 +83,7 @@ def test_watch_match_shows_only_banner_and_tally(
 
     assert "🐭 Mouse:" in out  # opening banner
     assert "Match complete" in out  # closing tally
+    assert ".." in out  # a per-game progress dot per finished game, on one line
     assert "Turn 1" not in out  # no per-move narration
     assert "=== Game" not in out  # no per-game headers
     assert "(mouse) wins." not in out  # no per-game results

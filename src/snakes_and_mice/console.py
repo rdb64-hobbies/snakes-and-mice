@@ -223,7 +223,9 @@ class ConsoleObserver(Observer):
     The engine fires every hook; this observer gates its own output against the
     :class:`~snakes_and_mice.observer.ObservationLevel` it was built with —
     ``move`` shows every turn, ``game`` just each game's board and result, and
-    ``match`` only the opening banner and the closing tally. Per-game
+    ``match`` only the opening banner and the closing tally. The two coarser
+    levels also show a single line of dots for progress: ``game`` a dot per move
+    within a game, ``match`` a dot per finished game. Per-game
     bookkeeping (the game counter, the turn counter) is kept up to date at every
     level, so it is correct whenever a finer level does render. It never pauses:
     with a human player, that player's own input paces the game; otherwise play
@@ -271,15 +273,24 @@ class ConsoleObserver(Observer):
     def on_move_end(
         self, side: Side, move: Move, board: Board, outcome: TurnOutcome
     ) -> None:
-        if self.level < ObservationLevel.MOVE:
-            return
-        print(f"  plays {move}:\n")
-        print(render_board(board))
+        if self.level >= ObservationLevel.MOVE:
+            print(f"  plays {move}:\n")
+            print(render_board(board))
+        elif self.level == ObservationLevel.GAME:
+            # One dot per move, on a single line, so a game's progress is visible
+            # without the full per-move narration. The line is terminated by the
+            # leading newline of the game result in on_game_end.
+            print(".", end="", flush=True)
 
     def on_game_end(self, result: GameResult) -> None:
-        if self.level < ObservationLevel.GAME:
-            return
-        print(f"\n{describe_game_result(result, self._names)}")
+        if self.level >= ObservationLevel.GAME:
+            print(f"\n{describe_game_result(result, self._names)}")
+        elif self._num_games > 1:
+            # MATCH level: one dot per finished game, on a single line, so match
+            # progress is visible without any per-game detail. The line is
+            # terminated by the leading newline of the tally in on_match_end
+            # (which runs on the same num_games > 1 condition).
+            print(".", end="", flush=True)
 
     def on_match_end(self, result: MatchResult) -> None:
         if self._num_games > 1:
