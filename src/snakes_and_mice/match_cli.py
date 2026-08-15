@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> None:
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="play-match",
-        description="Play or watch a single match of Snakes and Mice.",
+        description="Play and optionally watch a single match of Snakes and Mice.",
     )
     parser.add_argument(
         "--mouse", default="random", metavar="WHO",
@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> None:
         "--tournament-results", nargs="?", const=str(DEFAULT_RESULTS_PATH),
         default=None, metavar="FILE",
         help=(
-            "record this match to the tournament results file (§6); off by default, "
+            "record this match to the tournament results file; off by default, "
             f"bare appends to {DEFAULT_RESULTS_PATH}, or give a path"
         ),
     )

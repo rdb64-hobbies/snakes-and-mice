@@ -45,7 +45,7 @@ from .serialize import append_match_result
 # defaults (all vs same) give a round-robin; the rest illustrate the other subset
 # forms — an explicit list, the newcomer cross, and above/below cohorts.
 _EXAMPLES: str = """\
-examples (--players is subset A, --against is subset B; every match straddles them):
+examples (each match pairs a --players entry against an --against entry):
   play-tournament-matches
       full round-robin: every player meets every other, both seats (all vs same)
   play-tournament-matches --players alice bob carol
@@ -71,18 +71,19 @@ def main(argv: list[str] | None = None) -> None:
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="play-tournament-matches",
-        description="Play many Snakes and Mice matches and record them (§6).",
+        description="Play and optionally watch multiple Snakes and Mice matches, "
+                    "and record them as tournament results.",
         epilog=_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--players", nargs="+", default=["all"], metavar="SELECTOR",
-        help="subset A: roster names, or all | above <name> | below <name> "
+        help="the players to run: roster names, or all | above <name> | below <name> "
         "(default: all)",
     )
     parser.add_argument(
         "--against", nargs="+", default=["same"], metavar="SELECTOR",
-        help="subset B: roster names, or all | same | above <name> | below <name> "
+        help="their opponents: roster names, or all | same | above <name> | below <name> "
         "(default: same)",
     )
     parser.add_argument(
@@ -116,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(str(exc))
 
     if not schedule:
-        parser.error("the selected subsets produce no matches to play")
+        parser.error("the selected players and opponents produce no matches to play")
 
     total: int = len(schedule)
     try:
