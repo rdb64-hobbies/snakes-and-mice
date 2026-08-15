@@ -62,7 +62,7 @@ def test_chosen_cells_are_always_empty_and_legal() -> None:
     # Drive one player directly: every move it returns places 1–2 distinct,
     # currently-empty cells on the shared board it is tracking.
     player = RandomPlayer("Mouse", random.Random(3))
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, Cell.from_label("B3"))
     board = Board()
     for _ in range(10):
         empties_before = set(board.empty_cells())
@@ -80,7 +80,7 @@ def test_single_piece_move_when_one_cell_remains() -> None:
     # Fill every cell but one, then the random player must (and does) play a
     # single-piece move on the last empty cell.
     player = RandomPlayer("Mouse", random.Random(0))
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, Cell.from_label("B3"))
     leftover = Cell.from_label("E5")
     for cell in Board().empty_cells():
         if cell != leftover:
@@ -95,7 +95,7 @@ def test_no_empty_cells_raises() -> None:
     # board, but if it did, the random player refuses loudly rather than
     # returning an illegal empty move.
     player = RandomPlayer("Mouse", random.Random(0))
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, Cell.from_label("B3"))
     for cell in Board().empty_cells():
         player.observe_move(Side.MOUSE, Move.of(cell))
     with pytest.raises(RuntimeError):

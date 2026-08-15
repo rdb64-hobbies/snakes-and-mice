@@ -46,6 +46,31 @@ def test_initial_board_has_snake_at_b3_only() -> None:
     assert occupied == [Cell.from_label("B3")]
 
 
+def test_custom_seed_places_the_snake_there_and_nowhere_else() -> None:
+    board = Board(Cell.from_label("D4"))
+    assert board.occupant(Cell.from_label("D4")) is Side.SNAKE
+    assert board.is_empty(Cell.from_label("B3"))  # the default seed is not used
+    assert board.seed == Cell.from_label("D4")
+    occupied = [
+        Cell(r, c)
+        for r in range(BOARD_SIZE)
+        for c in range(BOARD_SIZE)
+        if not board.is_empty(Cell(r, c))
+    ]
+    assert occupied == [Cell.from_label("D4")]
+
+
+def test_copy_preserves_a_custom_seed() -> None:
+    board = Board(Cell.from_label("E5"))
+    board.place(Cell.from_label("A1"), Side.MOUSE)
+    clone = board.copy()
+    assert clone.seed == Cell.from_label("E5")
+    assert clone.occupant(Cell.from_label("A1")) is Side.MOUSE
+    # Independent: mutating the clone leaves the original untouched.
+    clone.place(Cell.from_label("A2"), Side.SNAKE)
+    assert board.is_empty(Cell.from_label("A2"))
+
+
 def test_place_and_occupant() -> None:
     board = Board()
     board.place(Cell.from_label("A1"), Side.MOUSE)

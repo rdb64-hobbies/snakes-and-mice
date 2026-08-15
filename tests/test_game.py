@@ -30,8 +30,8 @@ class RecordingPlayer(ScriptedPlayer):
         self.observed: list[tuple[Side, Move]] = []
         self.result: GameResult | None = None
 
-    def start_game(self, side: Side) -> None:
-        super().start_game(side)
+    def start_game(self, side: Side, seed: Cell) -> None:
+        super().start_game(side, seed)
         self.started_side = side
 
     def observe_move(self, side: Side, move: Move) -> None:
@@ -44,7 +44,7 @@ class RecordingPlayer(ScriptedPlayer):
 class SilentPlayer(Player):
     """A player that cannot produce a move."""
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         return None
 
     def observe_move(self, side: Side, move: Move) -> None:
@@ -58,7 +58,7 @@ class UnreachablePlayer(Player):
     """A player whose backend is unreachable — it can never take a turn, but
     through no fault of its own (see :class:`PlayerUnavailable`)."""
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         return None
 
     def observe_move(self, side: Side, move: Move) -> None:

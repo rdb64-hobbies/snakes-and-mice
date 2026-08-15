@@ -2,7 +2,8 @@
 
 ``Board`` is the engine's authoritative state, but it is deliberately reusable:
 a player MAY compose one to track its own view of the game (see the ``Player``
-abstraction). The board seeds itself with a snake at ``B3``.
+abstraction). The board seeds itself with a snake at ``B3`` by default, or at
+whatever cell a caller passes — the game loop uses this to vary the opening.
 """
 
 from __future__ import annotations
@@ -26,20 +27,30 @@ def _all_lines() -> tuple[tuple[Cell, ...], ...]:
 LINES: tuple[tuple[Cell, ...], ...] = _all_lines()
 """The 12 lines a player must fully occupy to win."""
 
-SNAKE_START = Cell.from_label("B3")
-"""The snake's seed cell — a starting position, not a move."""
+_SNAKE_START = Cell.from_label("B3")
+"""The default snake seed cell — a starting position, not a move. Private: the
+default lives only here, so other modules pass ``seed=None`` to mean "default"
+and read the resolved cell back from :attr:`Board.seed`."""
 
 
 class Board:
     """A 5×5 board tracking which side, if any, occupies each cell."""
 
-    def __init__(self) -> None:
-        self._cells: dict[Cell, Side] = {SNAKE_START: Side.SNAKE}
+    def __init__(self, seed: Cell | None = None) -> None:
+        # ``None`` means the default seed; resolve it here so the board always
+        # knows its concrete seed cell (exposed via the seed property).
+        self._seed: Cell = seed if seed is not None else _SNAKE_START
+        self._cells: dict[Cell, Side] = {self._seed: Side.SNAKE}
+
+    @property
+    def seed(self) -> Cell:
+        """The cell the snake was seeded on at the start of this game."""
+        return self._seed
 
     def copy(self) -> Board:
         """An independent copy of this board, safe to mutate without affecting
         the original — useful for a player exploring hypothetical moves."""
-        clone: Board = Board()
+        clone: Board = Board(self._seed)
         clone._cells = dict(self._cells)
         return clone
 

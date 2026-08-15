@@ -282,6 +282,7 @@ class ConsoleObserver(Observer):
             return
         if self._num_games > 1:
             print(f"\n=== Game {self._game} of {self._num_games} ===")
+        print(f"Snake seeded at {board.seed}.")
         # The starting board is only worth showing when the moves that follow
         # will update it — i.e. at MOVE level. At GAME level it would be a lone
         # seeded board no one watches change, so skip it.

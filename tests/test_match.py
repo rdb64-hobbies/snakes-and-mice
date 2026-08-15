@@ -8,6 +8,7 @@ import pytest
 
 from snakes_and_mice import (
     Board,
+    Cell,
     GameResult,
     MatchResult,
     Move,
@@ -101,7 +102,7 @@ def test_match_result_invariants_hold() -> None:
 class _UnreachablePlayer(Player):
     """A player whose backend is unreachable every turn — never a fault."""
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         return None
 
     def observe_move(self, side: Side, move: Move) -> None:
@@ -148,9 +149,9 @@ class _CountingPlayer(RandomPlayer):
         self.sides_seen: list[Side] = []
         self.games_ended: int = 0
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         self.sides_seen.append(side)
-        super().start_game(side)
+        super().start_game(side, seed)
 
     def end_game(self, result: GameResult) -> None:
         self.games_ended += 1
@@ -220,3 +221,36 @@ def test_match_fires_complete_event_stream() -> None:
     assert recorder.events[1] == "game_start"
     first_game_end: int = recorder.events.index("game_end")
     assert recorder.events[2:first_game_end] == ["move_start", "move_end"] * 5
+
+
+class _SeedRecorder(Observer):
+    """Records the snake's seed cell reported at each game's start."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seeds: list[Cell] = []
+
+    def on_game_start(self, names: dict[Side, str], board: Board) -> None:
+        self.seeds.append(board.seed)
+
+
+def test_openings_are_fixed_at_b3_without_an_rng() -> None:
+    # With no rng, every game opens with the snake on the default cell (B3).
+    recorder = _SeedRecorder()
+    mouse = RandomPlayer("Mouse", random.Random(1))
+    snake = RandomPlayer("Snake", random.Random(2))
+    play_match(mouse, snake, 8, recorder)
+
+    assert recorder.seeds == [Cell.from_label("B3")] * 8
+
+
+def test_random_openings_vary_the_seed_across_games() -> None:
+    # Given an rng, each game draws its own seed, so a run of games explores
+    # several openings instead of replaying one — the point of randomizing.
+    recorder = _SeedRecorder()
+    mouse = RandomPlayer("Mouse", random.Random(1))
+    snake = RandomPlayer("Snake", random.Random(2))
+    play_match(mouse, snake, 20, recorder, random.Random(123))
+
+    assert len(set(recorder.seeds)) > 1  # not all the same opening
+    assert len(recorder.seeds) == 20

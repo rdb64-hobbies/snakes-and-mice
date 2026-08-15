@@ -27,9 +27,9 @@ The board. Rows are labeled A (top) to E (bottom); columns 1 (left) to 5 \
 are A1 through E5.
 
 Sides. One player is the mouse, the other the snake. The mouse moves first. \
-Before the first move the snake already occupies cell B3 (it is seeded there, \
-which is a starting position, not the snake's move); every other cell starts \
-empty.
+Before the first move the snake already occupies one seeded cell (a starting \
+position, not the snake's move) — you are told which cell at the start of each \
+game; every other cell starts empty.
 
 A turn. On your turn you place TWO of your own pieces on two different empty \
 cells — UNLESS a single piece already ends the game (completes a line for you, \
@@ -49,8 +49,8 @@ places the wrong number of pieces (not one or two); plays on an already-occupied
 cell; plays a single piece that does not end the game; or misreports the outcome.
 
 What you see. You are told only your opponent's moves, as they happen. You must \
-track the full board yourself from the seeded snake at B3, your own moves, and \
-your opponent's.
+track the full board yourself from the seeded snake (whose cell you are told), \
+your own moves, and your opponent's.
 
 Your response. Each turn, return the structured fields: move_rationale (a short \
 justification), cells (one or two labels like ["C3","D4"]), and claimed_outcome \

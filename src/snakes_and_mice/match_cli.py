@@ -11,16 +11,20 @@ quieting, ``--watch``) lives in :mod:`cli_common`; presentation is in
 from __future__ import annotations
 
 import argparse
+import random
 from pathlib import Path
 
 from .cli_common import (
     DEFAULT_LOG_DIR,
     DEFAULT_RESULTS_PATH,
+    add_seed_argument,
     add_watch_argument,
     make_observer,
     make_player,
+    parse_seed,
     quiet_http_logging,
 )
+from .core import Cell
 from .config import ConfigError, Roster, load_environment, load_roster
 from .core import Side
 from .match import play_match
@@ -37,7 +41,9 @@ def main(argv: list[str] | None = None) -> None:
     how much is shown. ``--mouse`` and ``--snake`` each name who plays that side:
     ``random``, ``human``, or an LLM roster name from ``players.yaml``. A human at
     the board always forces ``move`` detail (with a note), since a human must see
-    every move to play it. ``--log-llm [DIR]`` dumps each LLM player's full raw
+    every move to play it. ``--seed`` sets where the snake is seeded each game:
+    ``random`` (the default) varies it from game to game, or a fixed cell like
+    ``B3`` pins it. ``--log-llm [DIR]`` dumps each LLM player's full raw
     message thread as JSON for debugging. ``--tournament-results [FILE]`` records
     the match to the results file (§6); omit it and nothing is written.
     """
@@ -58,6 +64,7 @@ def main(argv: list[str] | None = None) -> None:
         help="number of games in the match (default: 1)",
     )
     add_watch_argument(parser, default="move")
+    add_seed_argument(parser)
     parser.add_argument(
         "--log-llm", nargs="?", const=DEFAULT_LOG_DIR, default=None, metavar="DIR",
         help=(
@@ -77,6 +84,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.games < 1:
         parser.error("--games must be at least 1")
+
+    try:
+        opening: Cell | random.Random = parse_seed(args.seed)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     quiet_http_logging()
 
@@ -105,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
         watch = "move"
     try:
         result: MatchResult = play_match(
-            mouse, snake, args.games, make_observer(watch)
+            mouse, snake, args.games, make_observer(watch), opening
         )
     except ModelRequestError as exc:
         # A provider call failed mid-game (e.g. an unavailable model); report it

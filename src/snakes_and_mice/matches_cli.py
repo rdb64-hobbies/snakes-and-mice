@@ -15,17 +15,20 @@ lives here; the schedule computation itself is in :mod:`schedule`.
 from __future__ import annotations
 
 import argparse
+import random
 from pathlib import Path
 
 from .cli_common import (
     DEFAULT_RESULTS_PATH,
+    add_seed_argument,
     add_watch_argument,
     make_observer,
     make_player,
+    parse_seed,
     quiet_http_logging,
 )
 from .config import ConfigError, Roster, load_environment, load_roster
-from .core import Side
+from .core import Cell, Side
 from .faults import TournamentError
 from .match import play_match
 from .players import ModelRequestError, Player
@@ -66,8 +69,9 @@ def main(argv: list[str] | None = None) -> None:
     is one of: an explicit list of roster names, ``all``, ``same`` (``--against``
     only), ``above <name>``, or ``below <name>`` (the pivot exclusive, using
     ``players.yaml`` order). ``--games N`` sets a uniform game count and ``--watch``
-    the detail (default ``game``). Results append to the tournament file; pass
-    ``--tournament-results FILE`` to point elsewhere.
+    the detail (default ``game``). ``--seed`` sets where the snake is seeded each
+    game: ``random`` (the default) or a fixed cell like ``B3``. Results append to
+    the tournament file; pass ``--tournament-results FILE`` to point elsewhere.
     """
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog="play-tournament-matches",
@@ -91,6 +95,7 @@ def main(argv: list[str] | None = None) -> None:
         help="number of games in each match (default: 1)",
     )
     add_watch_argument(parser, default="game")
+    add_seed_argument(parser)
     parser.add_argument(
         "--tournament-results", type=Path, default=DEFAULT_RESULTS_PATH, metavar="FILE",
         help=f"results file to append to (default: {DEFAULT_RESULTS_PATH})",
@@ -99,6 +104,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.games < 1:
         parser.error("--games must be at least 1")
+
+    try:
+        opening: Cell | random.Random = parse_seed(args.seed)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     selector_a: Selector = _parse_selector(parser, args.players, allow_same=False)
     selector_b: Selector = _parse_selector(parser, args.against, allow_same=True)
@@ -120,15 +130,17 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("the selected players and opponents produce no matches to play")
 
     total: int = len(schedule)
+    # For a random opening, one RNG spans the whole batch (a fresh seed cell per
+    # game); for a fixed cell, the same cell every game. A fresh observer per
+    # match, so its counters and scoreboard reset.
     try:
         for index, (mouse_name, snake_name) in enumerate(schedule, start=1):
             print(f"\n### Match {index}/{total}: {mouse_name} (mouse) "
                   f"vs {snake_name} (snake) ###")
             mouse: Player = make_player(mouse_name, Side.MOUSE, roster, None)
             snake: Player = make_player(snake_name, Side.SNAKE, roster, None)
-            # A fresh observer per match, so its counters and scoreboard reset.
             result: MatchResult = play_match(
-                mouse, snake, args.games, make_observer(args.watch)
+                mouse, snake, args.games, make_observer(args.watch), opening
             )
             append_match_result(result, results_path)
     except ConfigError as exc:

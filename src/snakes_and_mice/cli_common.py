@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import random
 from pathlib import Path
 
 from .config import Roster, make_llm_player
 from .console import ConsoleObserver
-from .core import Side
+from .core import Cell, Side
+from .faults import IllegalMove
 from .observer import ObservationLevel, Observer
 from .players import HumanPlayer, Player, RandomPlayer
+
+SEED_DEFAULT: str = "random"
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
 DEFAULT_LOG_DIR: str = "llm-logs"
@@ -78,6 +82,33 @@ def observation_level(watch: str) -> ObservationLevel:
     observer at all) and is handled by :func:`make_observer`.
     """
     return ObservationLevel[watch.upper()]
+
+
+def add_seed_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared ``--seed`` option: ``random`` (the default) or a fixed cell."""
+    parser.add_argument(
+        "--seed", default=SEED_DEFAULT, metavar="CELL",
+        help="where the snake is seeded each game: 'random' (default) or a fixed "
+             "cell like B3",
+    )
+
+
+def parse_seed(value: str) -> Cell | random.Random:
+    """Turn a ``--seed`` argument into an opening for :func:`play_match`.
+
+    ``random`` yields a fresh :class:`random.Random` (a new seed cell per game);
+    any other value is parsed as a fixed cell label like ``B3``. Raises
+    :class:`ValueError` with a CLI-friendly message if the label is not a valid
+    on-board cell, so the caller can report it via ``parser.error``.
+    """
+    if value.lower() == SEED_DEFAULT:
+        return random.Random()
+    try:
+        return Cell.from_label(value)
+    except (ValueError, IllegalMove) as exc:
+        raise ValueError(
+            f"invalid --seed {value!r}: use 'random' or a cell label like B3"
+        ) from exc
 
 
 def make_observer(watch: str) -> Observer | None:

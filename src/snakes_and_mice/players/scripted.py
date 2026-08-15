@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from ..core import Move, MoveChoice, Side
+from ..core import Cell, Move, MoveChoice, Side
 from .base import Player
 
 
@@ -31,7 +31,9 @@ class ScriptedPlayer(Player):
         """Build a scripted player from bare moves (no outcome claims)."""
         return cls([MoveChoice(move) for move in moves], name)
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
+        # The seed cell is irrelevant to a scripted player: it replays fixed
+        # choices and never consults the board.
         self._side = side
         self._index = 0
 

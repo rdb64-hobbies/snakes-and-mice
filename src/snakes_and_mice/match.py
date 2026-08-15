@@ -10,11 +10,19 @@ to play both sides, play two matches with the sides swapped.
 
 from __future__ import annotations
 
-from .core import Side
+import random
+
+from .core import BOARD_SIZE, Cell, Side
 from .game import play_game
 from .observer import Observer
 from .players.base import Player
 from .result import GameResult, MatchResult, Termination
+
+# Every cell is a legal opening seed for the snake (the board is otherwise empty),
+# so a randomized opening draws uniformly from all of them.
+_ALL_CELLS: tuple[Cell, ...] = tuple(
+    Cell(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
+)
 
 
 def play_match(
@@ -22,6 +30,7 @@ def play_match(
     snake: Player,
     num_games: int,
     observer: Observer | None = None,
+    opening: Cell | random.Random | None = None,
 ) -> MatchResult:
     """Play ``num_games`` games between ``mouse`` and ``snake``; return the tally.
 
@@ -30,6 +39,13 @@ def play_match(
     of every game's outcome. An optional :class:`Observer` is driven in lockstep:
     the match boundaries and every game's events are fired to it, and it decides
     (from its :class:`~snakes_and_mice.observer.ObservationLevel`) what to show.
+
+    ``opening`` chooses where the snake is seeded each game (see
+    :func:`_pick_seed`): a fixed :class:`~snakes_and_mice.core.Cell` uses that
+    cell every game; a :class:`random.Random` draws one uniformly per game, so
+    games don't replay the same opening — useful when deterministic players (e.g.
+    two temperature-0 LLMs) would otherwise produce identical games; ``None``
+    uses the board's default seed.
 
     Like :func:`~snakes_and_mice.game.play_game`, this does not catch
     provider/configuration errors: an LLM player's ``ModelRequestError`` flies
@@ -52,7 +68,9 @@ def play_match(
     faults: list[GameResult] = []
 
     for _ in range(num_games):
-        result: GameResult = play_game(mouse, snake, observer)
+        result: GameResult = play_game(
+            mouse, snake, observer, seed=_pick_seed(opening)
+        )
         if result.termination is Termination.LINE_COMPLETED:
             assert result.winner is not None
             if result.winner is Side.MOUSE:
@@ -85,3 +103,14 @@ def play_match(
     if observer is not None:
         observer.on_match_end(match_result)
     return match_result
+
+
+def _pick_seed(opening: Cell | random.Random | None) -> Cell | None:
+    """The snake's seed cell for one game, per the ``opening`` policy: a uniformly
+    random cell for a :class:`random.Random` (so successive games open
+    differently), the given cell for a :class:`~snakes_and_mice.core.Cell`, or
+    ``None`` to let :func:`~snakes_and_mice.game.play_game` (and the board) apply
+    their default. The board's default lives in one place, not here."""
+    if isinstance(opening, random.Random):
+        return opening.choice(_ALL_CELLS)
+    return opening

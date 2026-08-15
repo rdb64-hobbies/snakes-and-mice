@@ -85,11 +85,20 @@ There are **12 lines** in total:
 
 ### 2.4 Setup
 
-The board begins **empty except for a single snake at `B3`**. This is the
-starting position, not a move by the Snake player. It counts as a real snake
-piece for all win detection.
+The board begins **empty except for a single seeded snake** on one cell. This is
+a starting position, not a move by the Snake player, but it counts as a real
+snake piece for all win detection.
 
-Note: `B3` lies on **row B** and **column 3**, and on **neither diagonal**.
+**Which cell is seeded is a setup parameter.** It defaults to **`B3`** — which
+lies on **row B** and **column 3**, and on **neither diagonal** — but a caller
+may pin it to any cell or have it chosen at random each game. Randomizing the
+opening is how the benchmark keeps deterministic players from replaying identical
+games; see §5, "Randomized openings." A seed that lies on a diagonal (e.g. the
+center `C3`) gives the Snake a head start on more lines than the off-diagonal
+default, but the rules are otherwise identical wherever the snake is seeded.
+
+Every player is **told the seeded cell at the start of each game** (§3), so a
+player that tracks its own board can place the snake correctly.
 
 ### 2.5 A turn / a move
 
@@ -118,7 +127,8 @@ or diagonal) with their own pieces.
   *first* of two pieces completes a line, they win immediately and the second
   piece is not placed. A player that foresees this may submit a **single-piece
   move** (§2.5) for that winning piece alone.
-- The pre-placed snake at `B3` counts toward the Snake player's lines.
+- The pre-placed (seeded) snake counts toward the Snake player's lines, wherever
+  it sits (§2.4).
 
 ### 2.7 Cat's game (draw)
 
@@ -193,9 +203,10 @@ class Player(ABC):
         self.name = name or type(self).__name__
 
     @abstractmethod
-    def start_game(self, side: Side) -> None:
-        """Begin a new game as `side`. (Re)initialize internal board state,
-        including the starting snake at B3. Resets any state from a prior game."""
+    def start_game(self, side: Side, seed: Cell) -> None:
+        """Begin a new game as `side`, with the snake seeded on `seed`.
+        (Re)initialize internal board state, seeding the snake on `seed` (the
+        opening may be randomized, §2.4/§5). Resets any state from a prior game."""
 
     @abstractmethod
     def observe_move(self, side: Side, move: Move) -> None:
@@ -252,8 +263,8 @@ class MoveChoice:
 
 ### Turn flow driven by the engine
 
-1. Call `start_game(side)` on both players; each seeds a fresh board including the
-   snake at `B3`.
+1. Call `start_game(side, seed)` on both players; each seeds a fresh board with
+   the snake on `seed` — the game's opening cell (§2.4/§5).
 2. Ask the player to move: `choose_move()`, which returns a `MoveChoice` (a move
    and an optional `claimed_outcome`). If instead it raises `MoveUnavailable`,
    the game ends with a `PLAYER_FAULT` result — skip to step 5.
@@ -423,11 +434,13 @@ assigned per game"):
    `result.fault.offender == <its own side this game>`. If so, it
    **composes and stores** feedback for itself from the structured
    `PlayerFaultDetail` (what it did wrong and how to avoid it next time).
-2. At the next `start_game(side)`, the player **prepends** that stored feedback
-   to the first prompt/message it builds for the new game.
+2. At the next `start_game(side, seed)`, the player **prepends** that stored
+   feedback to the first prompt/message it builds for the new game.
 
-`start_game` needs no new parameter for this: it only assigns the role, while the
-player owns its own prompting/messaging and therefore owns the prepend.
+The feedback mechanism itself needs no new parameter: the player owns its own
+prompting/messaging and therefore owns the prepend. (`start_game` does carry a
+`seed` — §2.4 — but that only tells the player where the snake starts this game;
+it is unrelated to feedback.)
 
 ### Shared board helper
 
@@ -550,12 +563,17 @@ No network call is made except when a move is actually needed: `start_game` and
 the next user turn on the following `choose_move`.
 
 - **Opening message (once, lazily on the first `choose_move`).** Explains the rules —
-  board, coordinates, the snake seeded at `B3`, two pieces per turn, the winning
-  lines, cat's game, what counts as illegal — and the response protocol (return
-  exactly the structured fields above; you see only your opponent's moves and must
-  track the board yourself).
-- **`start_game(side)`** enqueues a "you are playing {side} this game" message. Per
-  §3 it also prepends any stored feedback from a game the player faulted.
+  board, coordinates, that the snake starts on one seeded cell (which cell you are
+  told at the start of each game, since the opening may be randomized), two pieces
+  per turn, the winning lines, cat's game, what counts as illegal — and the
+  response protocol (return exactly the structured fields above; you see only your
+  opponent's moves and must track the board yourself). Because this message is sent
+  once for the whole match, it names **no specific seed cell** — that belongs to
+  each game's start.
+- **`start_game(side, seed)`** enqueues a "you are playing {side} this game, and
+  the snake is seeded at {seed}" message — telling the model the opening cell so it
+  can track the board even when the opening is randomized. Per §3 it also prepends
+  any stored feedback from a game the player faulted.
 - **`observe_move(side, move)`** — for the **opponent's** move, enqueues "opponent
   played {move}"; for the player's **own** move it is a no-op (that move is already
   present as the model's own prior structured response).
@@ -793,7 +811,8 @@ compose; matches themselves are part of the road to 1.0.
 
 ```python
 def play_match(mouse: Player, snake: Player, num_games: int,
-               observer: Observer | None = None) -> MatchResult: ...
+               observer: Observer | None = None,
+               opening: Cell | random.Random | None = None) -> MatchResult: ...
 ```
 
 ### What a match reports
@@ -819,6 +838,44 @@ counted but not otherwise recorded: they belong to neither player. By constructi
 `mouse_wins + snake_wins + cats_games + mouse_faults + snake_faults + aborted ==
 num_games`, and `mouse_faults + snake_faults == len(faults)`. Richer scoring and
 standings belong to tournaments (§6), which aggregate these per-match tallies.
+
+### Randomized openings
+
+By default the snake is seeded on the same cell (`B3`, §2.4) every game. That is
+fine for scripted or random players, but it has a sharp edge for the benchmark:
+two deterministic models sampling at temperature 0 **replay the exact same game**
+every time, so a long match yields no more information than a single game.
+
+To break that, a match can **vary the opening per game**. `play_match`'s
+`opening` parameter selects the policy:
+
+- a fixed `Cell` — seed there every game (a pinned opening);
+- a `random.Random` — draw a fresh cell **uniformly at random per game**, so
+  successive games open differently even between two deterministic players;
+- `None` — use the board's default (`B3`).
+
+The draw is **per game, not per match**: one RNG spans the whole match and picks a
+new cell each game, guaranteeing variety within a single pairing. `play_match`
+resolves the policy to a concrete cell per game and passes it to
+`play_game(mouse, snake, observer=None, *, seed: Cell | None = None)`; the engine
+then hands each player the seeded cell via `start_game` (§3) and exposes it to the
+observer on the board it already receives — the console announces it at the start
+of each game.
+
+Two deliberate boundaries keep this tidy:
+
+- **The default value lives in one place** (the board). Every other layer passes
+  `None` to mean "the default" and reads back the resolved cell, so changing the
+  default never ripples outward.
+- **The library defaults to deterministic; only the CLI defaults to random.**
+  `play_game` / `play_match` default `seed` / `opening` to `None` (→ `B3`), so
+  programmatic callers and the test suite get repeatable games; the CLI's `--seed`
+  defaults to `random` (§7), since that is where varied openings are wanted.
+
+Per-game seeds are **not** recorded in the results file (§6): a `MatchResult`
+tallies outcomes across whatever openings were played. Recording openings — to
+analyze how the seed affects results — is game-balance work deferred past 1.0
+(§10).
 
 ### Observation levels
 
@@ -941,9 +998,10 @@ a documented contract, and roster loading preserves the file's order. The pure,
 unit-testable schedule computation — subsets + roster order → the ordered list of
 `(mouse, snake)` name pairs — is kept separate from argument parsing.
 
-*Other options.* `--games N` sets a uniform game count for every match; `--watch`
-selects the observation level (§5), defaulting to `game` (coarser than
-`play-match`, since a batch can be large). **Human players are rejected** — a batch
+*Other options.* `--games N` sets a uniform game count for every match; `--seed`
+sets the opening for every game — `random` (the default) or a fixed cell like
+`B3` (§5); `--watch` selects the observation level (§5), defaulting to `game`
+(coarser than `play-match`, since a batch can be large). **Human players are rejected** — a batch
 runs unattended, with no one to see the board or type a move — so the "human
 forces `move`" rule (§5) never applies here. There is no `--log-llm`: a
 per-conversation dump across a large batch is not useful.
@@ -982,8 +1040,8 @@ Derived percentages:
 first). Ties keep **roster order** (`players.yaml`).
 
 The standings are deliberately **side-agnostic**: no Mouse-vs-Snake breakdown,
-because whether the `B3` start favors a side is game-balance analysis deferred
-until after 1.0 (§10). A head-to-head player-vs-player matrix is likewise a natural
+because whether the opening favors a side — the default `B3` or any other seed
+(§2.4) — is game-balance analysis deferred until after 1.0 (§10). A head-to-head player-vs-player matrix is likewise a natural
 later addition the data already supports, but beyond the per-player standings
 specified here.
 
@@ -1000,7 +1058,9 @@ player's own input paces a game.
 **`play-match`** — play or watch a **single match**. `--mouse` and `--snake` each
 name who plays that side: `random`, `human`, or an **LLM roster name** from
 `players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
-for the match (§5); `--watch` defaults to `move`. If either player is human the
+for the match (§5); `--seed` sets where the snake is seeded each game — `random`
+(the default: a fresh cell per game) or a fixed cell like `B3` (§2.4, §5);
+`--watch` defaults to `move`. If either player is human the
 level is forced to `move` (with a message), since a human must see the board.
 `--log-llm [DIR]` (off by default) dumps each LLM player's full raw message thread
 as JSON for debugging (§4, "Message logging"); a no-op for non-LLM players.
@@ -1014,7 +1074,8 @@ between two LLMs, reporting per game.
 
 **`play-tournament-matches`** — run **many** matches from two player subsets and
 append each result to the file (§6). Options: `--players` / `--against` (the subset
-selectors), `--games N`, `--watch` (default `game`), and `--tournament-results
+selectors), `--games N`, `--seed` (opening for every game: `random` default or a
+fixed cell, §5), `--watch` (default `game`), and `--tournament-results
 [FILE]` (path override only — this command always appends). Human players are
 rejected. E.g. `play-tournament-matches` runs a full round-robin, and
 `play-tournament-matches --players new-model --against all` enters a new player
@@ -1115,6 +1176,7 @@ changes, as the `Player` abstraction (§3) is designed to allow.
 
 Out of scope until at least 1.0, and possibly beyond:
 
-- Game-balance analysis (whether Snake or Mouse is favored given the `B3` start).
+- Game-balance analysis (whether Snake or Mouse is favored, and how the seeded
+  opening cell affects that, §2.4).
 - Any GUI/TUI.
 - Network/remote play.

@@ -39,7 +39,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from ..core import Move, MoveChoice, Side, TurnOutcome
+from ..core import Cell, Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
     IllegalMove,
     MoveUnavailable,
@@ -132,11 +132,16 @@ class LLMPlayer(Player):
         self._pending: list[str] = [RULES_PREAMBLE]
         self._side: Side | None = None
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         # Any feedback from a game we just faulted was enqueued by end_game and is
-        # already ahead of this message in the pending queue (§11).
+        # already ahead of this message in the pending queue (§11). The seed cell
+        # is announced here, per game, since it can vary (the preamble describes
+        # the rule but names no cell — see RULES_PREAMBLE).
         self._side = side
-        self._pending.append(f"A new game begins. You are playing {side.value}.")
+        self._pending.append(
+            f"A new game begins. You are playing {side.value}. "
+            f"The snake is seeded at {seed}."
+        )
 
     def observe_move(self, side: Side, move: Move) -> None:
         # Our own move is already in the thread as the model's structured response;

@@ -43,9 +43,9 @@ class HumanPlayer(Player):
         self._board: Board = Board()
         self._side: Side | None = None
 
-    def start_game(self, side: Side) -> None:
+    def start_game(self, side: Side, seed: Cell) -> None:
         self._side = side
-        self._board = Board()
+        self._board = Board(seed)
 
     def observe_move(self, side: Side, move: Move) -> None:
         for cell in move.cells:

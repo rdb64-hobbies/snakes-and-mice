@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from snakes_and_mice import (
+    Cell,
     HumanPlayer,
     Move,
     MoveUnavailable,
@@ -33,7 +34,7 @@ class _FakeConsole:
 
     def _player(self, side: Side = Side.MOUSE) -> HumanPlayer:
         player = HumanPlayer("You", read_line=self.read_line, write=self.write)
-        player.start_game(side)
+        player.start_game(side, Cell.from_label("B3"))
         return player
 
     @property

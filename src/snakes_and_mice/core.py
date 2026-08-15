@@ -18,7 +18,7 @@ BOARD_SIZE = 5
 
 
 class Side(Enum):
-    """A player's side. Mouse moves first; the snake seeds the board at B3."""
+    """A player's side."""
 
     MOUSE = "mouse"
     SNAKE = "snake"

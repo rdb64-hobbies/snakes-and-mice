@@ -23,7 +23,7 @@ from snakes_and_mice.console import (
     render_standings,
 )
 from snakes_and_mice.board import Board
-from snakes_and_mice.core import Move, Side
+from snakes_and_mice.core import Cell, Move, Side
 from snakes_and_mice.faults import PlayerFaultReason
 from snakes_and_mice.result import (
     GameResult,
@@ -227,6 +227,21 @@ def test_render_fault_tally_when_no_one_faulted() -> None:
         "clean", played=2, won=1, lost=1, tied=0, faulted=0, opponent_faulted=0
     )
     assert render_fault_tally([clean]) == "No faults recorded."
+
+
+def test_game_start_announces_the_seed_cell(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The seed line shows the game's actual opening cell, so a randomized (or
+    # pinned) opening is visible to anyone watching.
+    mouse, snake = _mouse_wins_row_a()
+    play_match(
+        mouse, snake, 1, ConsoleObserver(ObservationLevel.GAME),
+        opening=Cell.from_label("D4"),
+    )
+    out = capsys.readouterr().out
+
+    assert "Snake seeded at D4." in out
 
 
 def test_single_game_omits_match_scaffolding(

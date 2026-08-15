@@ -10,12 +10,14 @@ live in test_console.)
 from __future__ import annotations
 
 import logging
+import random
 from pathlib import Path
 
 import pytest
 
-from snakes_and_mice.cli_common import make_observer
+from snakes_and_mice.cli_common import make_observer, parse_seed
 from snakes_and_mice.console import ConsoleObserver
+from snakes_and_mice.core import Cell
 from snakes_and_mice.match_cli import main
 from snakes_and_mice.observer import ObservationLevel
 from snakes_and_mice.serialize import read_match_results
@@ -27,6 +29,18 @@ def test_make_observer_maps_none_to_no_observer() -> None:
     observer = make_observer("game")
     assert isinstance(observer, ConsoleObserver)
     assert observer.level is ObservationLevel.GAME
+
+
+def test_parse_seed_maps_random_and_fixed_cells() -> None:
+    # "random" (any case) yields an RNG; a label yields that fixed cell.
+    assert isinstance(parse_seed("random"), random.Random)
+    assert isinstance(parse_seed("RANDOM"), random.Random)
+    assert parse_seed("B3") == Cell.from_label("B3")
+    # Bad labels — off-board or malformed — raise ValueError for the CLI to report.
+    with pytest.raises(ValueError):
+        parse_seed("Z9")
+    with pytest.raises(ValueError):
+        parse_seed("nonsense")
 
 
 def test_main_quiets_http_request_logging(
@@ -60,6 +74,22 @@ def test_records_one_line_when_flag_given(tmp_path: Path) -> None:
     recorded = read_match_results(results)
     assert len(recorded) == 1
     assert recorded[0].num_games == 3
+
+
+def test_seed_flag_runs_and_records(tmp_path: Path) -> None:
+    # Both --seed forms wire an opening into the match; the run completes and
+    # records as usual (the seed variation itself is covered in test_match).
+    for seed in ("random", "B3"):
+        results: Path = tmp_path / f"results-{seed}.jsonl"
+        main(["--watch", "none", "--games", "3", "--seed", seed,
+              "--tournament-results", str(results)])
+        assert len(read_match_results(results)) == 1
+
+
+def test_invalid_seed_is_reported(tmp_path: Path) -> None:
+    # A bad --seed value exits cleanly via parser.error rather than tracebacking.
+    with pytest.raises(SystemExit):
+        main(["--seed", "Z9", "--tournament-results", str(tmp_path / "r.jsonl")])
 
 
 def test_watch_none_runs_the_match_but_shows_nothing(

@@ -8,7 +8,7 @@ never guesses intent or assigns blame beyond what it observes.
 from __future__ import annotations
 
 from .board import Board
-from .core import Move, MoveChoice, Side, TurnOutcome
+from .core import Cell, Move, MoveChoice, Side, TurnOutcome
 from .faults import (
     IllegalMove,
     MoveUnavailable,
@@ -21,11 +21,16 @@ from .result import GameResult, PlayerFaultDetail, Termination
 
 
 def play_game(
-    mouse: Player, snake: Player, observer: Observer | None = None
+    mouse: Player,
+    snake: Player,
+    observer: Observer | None = None,
+    *,
+    seed: Cell | None = None,
 ) -> GameResult:
     """Play one game between ``mouse`` and ``snake``; return the result.
 
-    ``mouse`` moves first. Every termination — win, cat's game, fault, or a
+    ``mouse`` moves first. The snake is seeded on ``seed``; pass a cell to set the
+    seed, or ``None`` for the board's default. Every termination — win, cat's game, fault, or a
     no-contest abort — is reported to both players via ``end_game`` before this
     returns. An optional :class:`Observer` is driven in lockstep: the engine fires
     every hook it has, in order, and leaves it to the observer to decide (from its
@@ -38,11 +43,13 @@ def play_game(
     to the caller, which is expected to handle it once (as the CLI does), because
     it is broken for the whole run rather than for this one game.
     """
-    board: Board = Board()
+    board: Board = Board(seed)
     players: dict[Side, Player] = {Side.MOUSE: mouse, Side.SNAKE: snake}
     player: Player
+    # Hand players the board's resolved seed cell, never the raw (possibly None)
+    # argument — a player must know the concrete cell (e.g. to announce it).
     for side, player in players.items():
-        player.start_game(side)
+        player.start_game(side, board.seed)
     if observer is not None:
         names: dict[Side, str] = {side: players[side].name for side in Side}
         observer.on_game_start(names, board)

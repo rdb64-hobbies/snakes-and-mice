@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from snakes_and_mice import (
+    Cell,
     GameResult,
     Move,
     MoveUnavailable,
@@ -43,6 +44,10 @@ from snakes_and_mice import (
 from snakes_and_mice.players import LLMPlayer
 from snakes_and_mice.players.llm import LLMMove, ModelRequestError
 from snakes_and_mice.players.prompts import RULES_PREAMBLE
+
+# An arbitrary fixed seed cell for start_game calls that don't care where the
+# snake begins (the board default is private to board.py).
+_SEED: Cell = Cell.from_label("B3")
 
 
 def _move(
@@ -142,7 +147,7 @@ def _timeout_then_move_agent(
 
 def test_choose_move_returns_parsed_move_and_claim() -> None:
     player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"], "in_play")]))
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     choice = player.choose_move()
 
@@ -164,7 +169,7 @@ def test_bad_cells_map_to_move_unavailable(
     cells: list[str], reason: PlayerFaultReason
 ) -> None:
     player: LLMPlayer = LLMPlayer(_scripted([_move(cells)]))
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(MoveUnavailable) as excinfo:
         player.choose_move()
@@ -179,7 +184,7 @@ def test_provider_error_becomes_model_request_error() -> None:
         _failing_agent(ModelHTTPError(status_code=404, model_name="bad-model")),
         name="opus",
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(ModelRequestError) as excinfo:
         player.choose_move()
@@ -197,7 +202,7 @@ def test_config_http_status_aborts_the_run(status: int) -> None:
     player: LLMPlayer = LLMPlayer(
         _failing_agent(ModelHTTPError(status_code=status, model_name="m")), name="bot"
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(ModelRequestError):
         player.choose_move()
@@ -209,7 +214,7 @@ def test_user_error_aborts_the_run() -> None:
     player: LLMPlayer = LLMPlayer(
         _failing_agent(UserError("model does not support native output")), name="bot"
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(ModelRequestError):
         player.choose_move()
@@ -237,7 +242,7 @@ def test_operational_failures_are_transient_not_crashes(
     # ABORTED), never a fault and never a run-aborting ModelRequestError.
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
     player: LLMPlayer = LLMPlayer(_failing_agent(exc), name="bot")
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(PlayerUnavailable) as excinfo:
         player.choose_move()
@@ -255,7 +260,7 @@ def test_unparseable_output_is_logged_and_kept_in_history(tmp_path: Path) -> Non
         name="bot",
         log_dir=log_dir,
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(MoveUnavailable) as excinfo:
         player.choose_move()
@@ -284,7 +289,7 @@ def test_failed_turn_recorded_when_captured_is_shorter_than_thread(
     player: LLMPlayer = LLMPlayer(
         _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
     # A thread longer than the (compacted) wire history we will hand the recovery.
     player._history = [
         ModelRequest(parts=[UserPromptPart(content="turn 1")]),
@@ -326,7 +331,7 @@ def test_dangling_tool_call_is_closed_when_recorded(tmp_path: Path) -> None:
     player: LLMPlayer = LLMPlayer(
         _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
     failed: ModelResponse = ModelResponse(
         parts=[
             ThinkingPart(content="reasoning"),
@@ -378,7 +383,7 @@ def test_failed_turn_without_tool_call_gets_no_synthetic_return() -> None:
     # with no tool-call at all. There is nothing to close, so no synthetic tool-return
     # is appended — the thread must not grow a spurious empty request.
     player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"])]), name="bot")
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
     failed: ModelResponse = ModelResponse(parts=[ThinkingPart(content="no move")])
     captured: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content="your turn (mouse).")]),
@@ -404,7 +409,7 @@ def test_token_limit_truncation_is_a_distinct_fault(tmp_path: Path) -> None:
     # response is still persisted to the log and the thread.
     log_dir: Path = tmp_path / "logs"
     player: LLMPlayer = LLMPlayer(_truncated_agent(), name="bot", log_dir=log_dir)
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(MoveUnavailable) as excinfo:
         player.choose_move()
@@ -424,7 +429,7 @@ def test_transient_timeout_is_retried_then_succeeds(
     player: LLMPlayer = LLMPlayer(
         _timeout_then_move_agent(2, _move(["A1", "A2"], "in_play"))
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     choice = player.choose_move()
 
@@ -446,7 +451,7 @@ def test_unreachable_model_raises_player_unavailable(
         name="bot",
         log_dir=log_dir,
     )
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
 
     with pytest.raises(PlayerUnavailable) as excinfo:
         player.choose_move()
@@ -489,7 +494,7 @@ def test_prior_thinking_stripped_from_requests_but_kept_in_history() -> None:
         capabilities=[ProcessHistory(strip_prior_thinking)],
     )
     player: LLMPlayer = LLMPlayer(agent, name="bot")
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
     player.choose_move()  # turn 1
     player.observe_move(Side.SNAKE, Move.from_labels("E1", "E2"))
     player.choose_move()  # turn 2: its request carries turn 1's response
@@ -538,7 +543,7 @@ def test_rules_sent_once_and_fault_feedback_carried_forward() -> None:
         _scripted([_move(["A1", "A2"], "win"), _move(["B1", "B2"])], seen)
     )
 
-    player.start_game(Side.MOUSE)
+    player.start_game(Side.MOUSE, _SEED)
     player.choose_move()  # game 1
     player.end_game(
         GameResult(
@@ -552,7 +557,7 @@ def test_rules_sent_once_and_fault_feedback_carried_forward() -> None:
             ),
         )
     )
-    player.start_game(Side.MOUSE)  # game 2
+    player.start_game(Side.MOUSE, _SEED)  # game 2
     player.choose_move()
 
     assert RULES_PREAMBLE in seen[0]  # opening rules preamble, on the first turn…
@@ -560,12 +565,31 @@ def test_rules_sent_once_and_fault_feedback_carried_forward() -> None:
     assert "claimed win but it was actually in_play" in seen[1]  # the feedback
 
 
+def test_start_game_announces_the_seed_cell() -> None:
+    seen: list[str] = []
+    player: LLMPlayer = LLMPlayer(_scripted([_move(["A1", "A2"])], seen))
+
+    player.start_game(Side.MOUSE, Cell.from_label("D4"))
+    player.choose_move()
+
+    # The seed is announced per game (the preamble names no cell), so the model
+    # can track the board even when the opening is randomized.
+    assert "The snake is seeded at D4." in seen[0]
+
+
+def test_preamble_names_no_specific_seed_cell() -> None:
+    # The rules preamble must stay opening-agnostic: it describes the seeding rule
+    # but names no cell, since the seed can vary game to game and is given in each
+    # game's start message instead.
+    assert "B3" not in RULES_PREAMBLE
+
+
 def test_message_logging_writes_replayable_thread(tmp_path: Path) -> None:
     log_dir: Path = tmp_path / "logs"
     player: LLMPlayer = LLMPlayer(
         _scripted([_move(["A1", "A2"])]), name="bot", log_dir=log_dir
     )
-    player.start_game(Side.SNAKE)
+    player.start_game(Side.SNAKE, _SEED)
     player.choose_move()
 
     log_file: Path = log_dir / "bot-snake.json"
