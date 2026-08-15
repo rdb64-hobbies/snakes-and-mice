@@ -56,8 +56,9 @@ examples (each match pairs a --players entry against an --against entry):
   play-tournament-matches --players newbie --against all
       the newcomer against the whole roster, both seats, without making the
       existing players replay one another
-  play-tournament-matches --players above gpt5 --against below gpt5
-      the stronger cohort vs the weaker one (by players.yaml order)
+  play-tournament-matches --players carol --against below carol
+      carol against all other players in the roster listed below carol (by
+      players.yaml order)
 """
 
 
