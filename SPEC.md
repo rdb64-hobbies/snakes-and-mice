@@ -1,7 +1,7 @@
 # Snakes and Mice — Specification
 
-> Status: **living draft**. This document defines the game and the roadmap
-> through **1.0** (see §10 for the versioning scheme).
+> Status: **living draft**. This document defines the game and the project's
+> roadmap, through **1.0** and beyond (see §11 for the versioning scheme).
 
 ## 1. Overview
 
@@ -453,7 +453,7 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 
 The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
-implementation order (the first four are implemented — see the milestones in §10):
+implementation order (the first four are implemented — see the milestones in §11):
 
 1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
@@ -479,8 +479,9 @@ implementation order (the first four are implemented — see the milestones in �
    model via Pydantic AI, with support for a **range of LLM providers and models**
    (Anthropic, OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom
    endpoints). Specified in full in §4.
-5. **Algorithmic player** *(planned)*. Searches the game tree — e.g. alpha–beta (minimax with
-   pruning) — to choose strong moves.
+5. **Algorithmic player** *(planned)*. Plays **perfectly** via full-depth alpha–beta
+   (minimax with pruning) search to terminal positions, backed by a transposition
+   table keyed on a symmetry-canonical board. Specified in full in §10.
 6. **Reinforcement-learning player** *(planned)*. A policy trained via RL (self-play). Likely
    needs supporting tooling (training loop, model persistence) beyond the game
    engine itself.
@@ -498,7 +499,7 @@ each other over many games, composed from **matches** (§5) as its building bloc
 A tournament is simply *any set of matches*, accumulated in a shared results file,
 with match-**running** kept deliberately separate from result-**tallying**. This
 is specified in full in §6, and together with the LLM player (§4) it defines the
-**1.0** release (§10).
+**1.0** release (§11).
 
 ## 4. The LLM player
 
@@ -841,7 +842,7 @@ standings belong to tournaments (§6), which aggregate these per-match tallies.
 
 ### Randomized openings
 
-By default the snake is seeded on the same cell (`B3`, §2.4) every game. That is
+By default the snake is seeded on the same cell (the board default, §2.4) every game. That is
 fine for scripted or random players, but it has a sharp edge for the benchmark:
 two deterministic models sampling at temperature 0 **replay the exact same game**
 every time, so a long match yields no more information than a single game.
@@ -852,7 +853,7 @@ To break that, a match can **vary the opening per game**. `play_match`'s
 - a fixed `Cell` — seed there every game (a pinned opening);
 - a `random.Random` — draw a fresh cell **uniformly at random per game**, so
   successive games open differently even between two deterministic players;
-- `None` — use the board's default (`B3`).
+- `None` — use the board's default (§2.4).
 
 The draw is **per game, not per match**: one RNG spans the whole match and picks a
 new cell each game, guaranteeing variety within a single pairing. `play_match`
@@ -868,14 +869,14 @@ Two deliberate boundaries keep this tidy:
   `None` to mean "the default" and reads back the resolved cell, so changing the
   default never ripples outward.
 - **The library defaults to deterministic; only the CLI defaults to random.**
-  `play_game` / `play_match` default `seed` / `opening` to `None` (→ `B3`), so
+  `play_game` / `play_match` default `seed` / `opening` to `None`, so
   programmatic callers and the test suite get repeatable games; the CLI's `--seed`
   defaults to `random` (§7), since that is where varied openings are wanted.
 
 Per-game seeds are **not** recorded in the results file (§6): a `MatchResult`
 tallies outcomes across whatever openings were played. Recording openings — to
 analyze how the seed affects results — is game-balance work deferred past 1.0
-(§10).
+(§11).
 
 ### Observation levels
 
@@ -1040,8 +1041,8 @@ Derived percentages:
 first). Ties keep **roster order** (`players.yaml`).
 
 The standings are deliberately **side-agnostic**: no Mouse-vs-Snake breakdown,
-because whether the opening favors a side — the default `B3` or any other seed
-(§2.4) — is game-balance analysis deferred until after 1.0 (§10). A head-to-head player-vs-player matrix is likewise a natural
+because whether the opening favors a side — the default or any other seed
+(§2.4) — is game-balance analysis deferred until after 1.0 (§11). A head-to-head player-vs-player matrix is likewise a natural
 later addition the data already supports, but beyond the per-player standings
 specified here.
 
@@ -1056,8 +1057,8 @@ and an `Observer` (§3) watching at a selectable **observation level**
 player's own input paces a game.
 
 **`play-match`** — play or watch a **single match**. `--mouse` and `--snake` each
-name who plays that side: `random`, `human`, or an **LLM roster name** from
-`players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
+name who plays that side: `random`, `human`, `perfect` (the perfect algorithmic
+player, §10), or an **LLM roster name** from `players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
 for the match (§5); `--seed` sets where the snake is seeded each game — `random`
 (the default: a fresh cell per game) or a fixed cell like `B3` (§2.4, §5);
 `--watch` defaults to `move`. If either player is human the
@@ -1138,7 +1139,188 @@ board, move (a pair of cells), and game result.
   checker (e.g. `mypy` or `pyright`) run over the codebase, aiming for a clean,
   strict configuration.
 
-## 10. Versioning & scope
+## 10. The algorithmic player (perfect play)
+
+The **algorithmic player** plays the game **perfectly**: it searches the whole
+game to its conclusion and always makes a game-theoretically optimal move. It is
+the *calibrated, fixed-strength yardstick* of §1 — the strong non-LLM opponent a
+model can be measured against — and, unlike the LLM player, it never faults and
+never misreads an outcome. Because the board is tiny (25 cells, at most 12 moves),
+"perfect" is not an aspiration reached through heuristics but a *fully solvable*
+target: the player searches every relevant line of play to a terminal position and
+backs the true value up to the root.
+
+### What "perfect" means
+
+Concretely, on every turn the player returns a move that is **optimal under
+minimax**:
+
+- if the position is a forced win for its side, it plays a move that still forces
+  the win — and, among those, one that wins **as quickly as possible**;
+- if the position is at best a draw, it plays a move that **never lets the opponent
+  win** (securing at least the cat's game);
+- if the position is lost against perfect defence, it plays a move that **delays the
+  loss as long as possible**, maximizing the opponent's opportunities to err.
+
+The "win soonest / lose latest" tie-break matters for the benchmark: against a
+fallible LLM it converts winning positions into wins with the fewest chances for a
+swindle, and drags out lost ones so a mistaken opponent can still slip. Perfect
+play accounts for the **seeded snake** automatically — the seed is just a snake
+piece in the search, so whether a given opening is a forced win, loss, or draw for
+a side falls out of the search rather than being assumed.
+
+### It is a mechanical player
+
+The algorithmic player is a **mechanical** player in the sense of §3: it reads the
+board correctly by construction, so it makes **no self-assessment** — `choose_move`
+returns a `MoveChoice` with `claimed_outcome = None`, and the engine performs no
+outcome check for it. It composes a `Board` (§3, "Shared board helper") for its
+internal state, updated through `observe_move`, is assigned a side per game like
+every other player, and holds no cross-game state. Its only injected dependency is
+a `random.Random` (see "Choosing among optimal moves"), so a seeded instance is
+fully reproducible.
+
+### Full-depth alpha–beta search
+
+The engine of the player is **alpha–beta search (minimax with pruning)** carried
+**all the way to terminal positions** — a win, a cat's game — rather than to a
+fixed ply depth with a heuristic evaluation. Leaves are therefore scored *exactly*,
+not estimated; the pruning only removes branches that provably cannot affect the
+root value, so the result is identical to exhaustive minimax but far cheaper.
+
+Move generation follows §2.5: the moves at a node are all pairs of two distinct
+empty cells, plus any **single-piece move that ends the game** (completes a line, or
+fills the board into a cat's game). Win detection runs after each individual piece,
+so a move whose *first* piece completes a line is an immediate win; when the player
+has such a one-piece win it returns a **single-piece** `MoveChoice`, the honest
+representation of that turn (§2.5).
+
+### Exact, depth-aware scoring
+
+Terminal positions are scored from the perspective of the side to move, larger
+being better for that side, with the depth folded in so shorter wins and longer
+losses are preferred:
+
+```
+WIN = 1000                 # any bound larger than the maximum possible ply (≤ 12)
+
+# scored the instant the game ends, from the mover's perspective:
+#   this side completed a line   →  +(WIN − depth)     # win; fewer plies scores higher
+#   cat's game                    →   0
+# A loss is never scored directly: under negamax it is the negation of the
+# opponent's win, so a loss reached at depth d is −(WIN − d) — a larger d
+# (later loss) is less negative, i.e. preferred.
+```
+
+The search is a standard **negamax**: the value of a non-terminal node is the
+maximum over its legal moves of the terminal score (if the move ends the game) or
+`−value(child)` otherwise, with `depth` counting plies from the root. Alpha–beta
+cutoffs are applied in the usual way.
+
+### Move ordering
+
+Alpha–beta's savings depend on trying strong moves first. The player orders
+candidate moves to surface likely cutoffs early — **completing a line** (an
+immediate win) first, then moves that **advance the mover's own most-filled lines**
+or **poison the opponent's near-complete lines** — before the remaining quiet moves.
+Ordering never changes the value computed; it only reaches it sooner.
+
+### The symmetry group and the transposition table
+
+The dominant cost saving comes from recognizing that the same position is reached by
+enormously many move orders, and that geometrically equivalent positions share a
+value. Both are captured by a **transposition table** keyed on a **canonical
+position**.
+
+**The symmetry group.** The value of a position is invariant under every
+transformation that maps the 12 winning lines onto themselves. These form a group
+**G of order 32** — strictly larger than the 8 rigid rotations/reflections (**D₄**)
+of the square. Every element has the form `(r,c) ↦ (σr, τc)` or `(r,c) ↦ (σc, τr)`
+(the latter transposing rows and columns), where `σ` is one of the 8 permutations of
+`{1..5}` that commute with the reversal `ρ = (1 5)(2 4)` (equivalently: fix 3 and
+preserve the pairs `{1,5}`, `{2,4}`), and `τ ∈ {σ, ρσ}`. D₄ is exactly the slice
+with `σ ∈ {identity, ρ}`; the other 24 elements are "warps" such as *swap rows B↔D
+and columns 2↔4* that preserve every line without being a rigid motion. Under G the
+25 possible seed cells fall into just **4 equivalence classes**, and — crucially —
+**every** seed has a stabilizer of order ≥ 4, so even an off-axis opening that D₄
+leaves untouched still collapses ~4-fold at the root.
+
+**Canonical position.** Number the cells `0..24` (`index(r,c) = 5·(r−1)+(c−1)`) and
+represent a position as two 25-bit masks — mouse and snake (the seed is just a snake
+bit). Each of the 32 symmetries is a precomputed index permutation, so transforming
+a mask is a bit permutation. The **canonical key** is the numerically smallest of
+the 32 transformed positions, with mouse and snake transformed *together* by the
+same symmetry and packed into one integer for comparison:
+
+```python
+def canonical_key(mouse: int, snake: int) -> int:
+    best: int = -1
+    for perm in ALL_32_PERMS:                     # the 32 symmetries as index maps
+        packed: int = (permute(perm, mouse) << 25) | permute(perm, snake)
+        if best < 0 or packed < best:
+            best = packed
+    return best
+```
+
+Because the 32 transformed positions are exactly the position's orbit under G, their
+minimum is identical for every member of an orbit and distinct across orbits — a
+true canonical form. The **side to move is not part of the key**: it is a pure
+function of the piece counts (`snake == mouse + 1` ⇒ Mouse to move, `snake == mouse
+− 1` ⇒ Snake to move), which holds because every keyed position sits between complete
+two-piece moves (the only single-piece moves are terminal, and terminals are scored
+directly, never stored).
+
+**The table.** Each entry stores the position's minimax **value** and an alpha–beta
+**bound flag** (exact / lower-bound / upper-bound); it does **not** store a best
+move, so no inverse transform is ever needed. The player selects its actual move in
+the real, un-canonicalized frame at the root, evaluating each legal move's resulting
+child through canonical table lookups. A value-only table is correct because the
+value is symmetry-invariant.
+
+A self-checking construction test asserts that `ALL_32_PERMS` contains exactly 32
+distinct permutations and that each maps the set of 12 line-index-sets onto itself.
+
+### Choosing among optimal moves
+
+Often several moves share the optimal value. The player collects **all** moves whose
+value equals the best and picks **uniformly at random** among them, using its
+injected `random.Random`. This keeps a match between two perfect players (or a
+perfect player and a deterministic opponent) from replaying one identical game —
+mirroring the variety the random player and randomized openings (§5) bring — while a
+seeded RNG keeps any given run reproducible. Perfection is unaffected: every move in
+the pool is equally optimal.
+
+### Performance and what is deferred
+
+There is **no move-time budget**: the player plays perfectly however long that takes.
+The expectation, with the transposition table and order-32 canonicalization, is a
+first move (the most expensive one) in **seconds to a few minutes** on a typical
+developer machine; a first cut that is simple but slow is acceptable so long as it is
+not hours. Deliberately deferred: faster canonicalization (short-circuited
+comparison, per-symmetry caching, or incremental hashing); caching a best move per
+entry for stronger move ordering; and **persisting a solved result per opening
+class** — since G leaves only 4 seed classes, the whole game could be solved once and
+reused, but that is an optimization past the first working player.
+
+### Selecting and testing it
+
+The algorithmic player is a **built-in mechanical player named `perfect`**,
+constructed and selected **exactly like `random`**: it is chosen by name wherever a
+side is named — e.g. `play-match --mouse perfect --snake random` (§7) — alongside
+`random` and `human`, and it is built with a fixed per-side display name (the way
+`random` is), which is the name that appears in any results it produces. Like
+`random`, `perfect` is **not** part of the `players.yaml` tournament roster (§4,
+§6): the roster lists only LLM players. Making the mechanical baselines available as
+calibrated reference opponents inside tournaments (§1) is deferred — and when it
+comes, it is no different for `perfect` than for `random`.
+
+Testing leans on the player's exactness: unit tests assert the 32-symmetry
+self-check and canonical-form invariance (all orbit members share a key); that the
+player **never loses a drawn-or-won position** and **never fails to win a won one**
+against an exhaustive or random opponent; and that G-equivalent seeds yield the same
+game value, so the symmetry reduction is sound.
+
+## 11. Versioning & scope
 
 The project follows [Semantic Versioning](https://semver.org/); the version in
 `pyproject.toml` tracks capability milestones. The purpose of the project — an
@@ -1172,7 +1354,8 @@ progress toward that, not incidental churn.
   fixes bump the patch.
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
-changes, as the `Player` abstraction (§3) is designed to allow.
+changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
+player is specified in full in §10.
 
 Out of scope until at least 1.0, and possibly beyond:
 
