@@ -39,7 +39,8 @@ def main(argv: list[str] | None = None) -> None:
     By default two random bots play a single game at ``move`` detail. Pass
     ``--games N`` for a longer match and ``--watch match|game|move`` to choose
     how much is shown. ``--mouse`` and ``--snake`` each name who plays that side:
-    ``random``, ``human``, or an LLM roster name from ``players.yaml``. A human at
+    ``random``, ``human``, ``perfect`` (the perfect algorithmic player), or an LLM
+    roster name from ``players.yaml``. A human at
     the board always forces ``move`` detail (with a note), since a human must see
     every move to play it. ``--seed`` sets where the snake is seeded each game:
     ``random`` (the default) varies it from game to game, or a fixed cell like
@@ -53,11 +54,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--mouse", default="random", metavar="WHO",
-        help="who plays Mouse: random, human, or an LLM roster name (default: random)",
+        help="who plays Mouse: random, human, perfect, or an LLM roster name "
+             "(default: random)",
     )
     parser.add_argument(
         "--snake", default="random", metavar="WHO",
-        help="who plays Snake: random, human, or an LLM roster name (default: random)",
+        help="who plays Snake: random, human, perfect, or an LLM roster name "
+             "(default: random)",
     )
     parser.add_argument(
         "--games", type=int, default=1, metavar="N",
@@ -96,7 +99,7 @@ def main(argv: list[str] | None = None) -> None:
     results_path: Path | None = (
         Path(args.tournament_results) if args.tournament_results is not None else None
     )
-    builtin: set[str] = {"random", "human"}
+    builtin: set[str] = {"random", "human", "perfect"}
     needs_roster: bool = args.mouse not in builtin or args.snake not in builtin
 
     roster: Roster | None = None

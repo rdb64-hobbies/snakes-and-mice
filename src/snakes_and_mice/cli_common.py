@@ -20,11 +20,12 @@ from .console import ConsoleObserver, SECOND_PERSON
 from .core import Cell, Side
 from .faults import IllegalMove
 from .observer import ObservationLevel, Observer
-from .players import HumanPlayer, Player, RandomPlayer
+from .players import HumanPlayer, PerfectPlayer, Player, RandomPlayer
 
 SEED_DEFAULT: str = "random"
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
+PERFECT_NAME: dict[Side, str] = {Side.MOUSE: "Percy", Side.SNAKE: "Perseus"}
 DEFAULT_LOG_DIR: str = "llm-logs"
 DEFAULT_RESULTS_PATH: Path = Path("tournament-results.jsonl")
 """Where the tournament results file (§6) lives unless a command overrides it."""
@@ -56,12 +57,14 @@ def quiet_http_logging() -> None:
 def make_player(
     kind: str, side: Side, roster: Roster | None, log_dir: Path | None
 ) -> Player:
-    """Build the player for one side. ``kind`` is ``random``, ``human``, or an
-    LLM roster name (in which case ``roster`` must be loaded)."""
+    """Build the player for one side. ``kind`` is ``random``, ``human``,
+    ``perfect``, or an LLM roster name (in which case ``roster`` must be loaded)."""
     if kind == "human":
         return HumanPlayer(name=SECOND_PERSON)
     if kind == "random":
         return RandomPlayer(name=RANDOM_NAME[side])
+    if kind == "perfect":
+        return PerfectPlayer(name=PERFECT_NAME[side])
     assert roster is not None  # a roster is loaded whenever an LLM name is used
     return make_llm_player(kind, roster, log_dir=log_dir)
 
