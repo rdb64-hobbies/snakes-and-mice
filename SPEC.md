@@ -1150,6 +1150,15 @@ never misreads an outcome. Because the board is tiny (25 cells, at most 12 moves
 target: the player searches every relevant line of play to a terminal position and
 backs the true value up to the root.
 
+The game has in fact been solved outright, and the player is built on that result.
+Searching the *opening* live is hopeless — the tree above ~16 empty cells is far too
+wide — so the player is **two-tier**: an **offline retrograde solve** precomputes the
+exact value of every reachable position in the upper plies, and at run time the player
+**looks the opening up** and **live-searches the endgame**, where full-depth search is
+a matter of seconds. Both tiers return the same values by construction, so the seam is
+invisible: the player is exactly as perfect as a pure search would be, and merely
+faster.
+
 ### What "perfect" means
 
 Concretely, on every turn the player returns a move that is **optimal under
@@ -1176,9 +1185,12 @@ board correctly by construction, so it makes **no self-assessment** — `choose_
 returns a `MoveChoice` with `claimed_outcome = None`, and the engine performs no
 outcome check for it. It composes a `Board` (§3, "Shared board helper") for its
 internal state, updated through `observe_move`, is assigned a side per game like
-every other player, and holds no cross-game state. Its only injected dependency is
-a `random.Random` (see "Choosing among optimal moves"), so a seeded instance is
-fully reproducible.
+every other player, and holds no cross-game state: its transposition table is cleared
+at the start of every game. The **solved opening table** is not cross-game state — it
+is immutable, public fact about the game, no more carried between games than the rules
+are — so it is loaded once and shared, and gives a player no memory of what it has
+seen. Its only injected dependency is a `random.Random` (see "Choosing among optimal
+moves"), so a seeded instance is fully reproducible.
 
 ### Full-depth alpha–beta search
 
@@ -1197,25 +1209,40 @@ representation of that turn (§2.5).
 
 ### Exact, depth-aware scoring
 
-Terminal positions are scored from the perspective of the side to move, larger
-being better for that side, with the depth folded in so shorter wins and longer
-losses are preferred:
+**What `depth` means.** `depth` is a property of a *position*, not of the search that
+reached it: it is read straight off the piece counts as `(occupied − 1) // 2`, the
+number of moves already played. Two things follow. Values are **absolute** rather than
+relative to a search root, so a value computed anywhere is comparable with one computed
+anywhere else — which is what lets the offline table and the live search be mixed
+within a single game (§10, "The opening table"). And the `depth` in a winning score is
+that of the node **from which the winning move is made**, not of the position the win
+lands in: a node whose mover *has* a win is scored without descending into it. That
+distinction is a constant 1 either way and invisible inside a single search, but both
+tiers must adopt the same one or their values disagree at every boundary.
+
+**How a terminal is scored.** Scores are from the perspective of the side to move,
+larger being better for that side, with the depth folded in:
 
 ```
-WIN = 1000                 # any bound larger than the maximum possible ply (≤ 12)
+WIN = 1000        # larger than any reachable depth (a game lasts ≤ 12 plies)
 
-# scored the instant the game ends, from the mover's perspective:
-#   this side completed a line   →  +(WIN − depth)     # win; fewer plies scores higher
-#   cat's game                    →   0
-# A loss is never scored directly: under negamax it is the negation of the
-# opponent's win, so a loss reached at depth d is −(WIN − d) — a larger d
-# (later loss) is less negative, i.e. preferred.
+# In each case `depth` is that of the node whose mover completes the line.
+#
+#   win     this side has a move completing a line     →  +(WIN − depth)
+#   cat's   the move fills the board, every line dead  →   0
+#   loss    the opponent has such a move               →  −(WIN − depth)
 ```
 
-The search is a standard **negamax**: the value of a non-terminal node is the
-maximum over its legal moves of the terminal score (if the move ends the game) or
-`−value(child)` otherwise, with `depth` counting plies from the root. Alpha–beta
-cutoffs are applied in the usual way.
+The win and loss scores are the same magnitude with opposite signs, because a loss is
+never scored in its own right — under negamax it is simply the negation of the
+opponent's win. Folding `depth` in this way is what produces the tie-break behaviour
+above: among wins a **smaller** depth scores higher, so the player wins as quickly as
+it can; among losses `−(WIN − depth)` is less negative for a **larger** depth, so it
+resists as long as it can.
+
+The search is a standard **negamax**: the value of a non-terminal node is the maximum
+over its legal moves of the terminal score (if the move ends the game) or
+`−value(child)` otherwise. Alpha–beta cutoffs are applied in the usual way.
 
 ### Move ordering
 
@@ -1237,15 +1264,21 @@ transformation that maps the 12 winning lines onto themselves. These form a grou
 **G of order 32** — strictly larger than the 8 rigid rotations/reflections (**D₄**)
 of the square. Every element has the form `(r,c) ↦ (σr, τc)` or `(r,c) ↦ (σc, τr)`
 (the latter transposing rows and columns), where `σ` is one of the 8 permutations of
-`{1..5}` that commute with the reversal `ρ = (1 5)(2 4)` (equivalently: fix 3 and
-preserve the pairs `{1,5}`, `{2,4}`), and `τ ∈ {σ, ρσ}`. D₄ is exactly the slice
-with `σ ∈ {identity, ρ}`; the other 24 elements are "warps" such as *swap rows B↔D
-and columns 2↔4* that preserve every line without being a rigid motion. Under G the
-25 possible seed cells fall into just **4 equivalence classes**, and — crucially —
-**every** seed has a stabilizer of order ≥ 4, so even an off-axis opening that D₄
-leaves untouched still collapses ~4-fold at the root.
+`{0..4}` that commute with the reversal `ρ = (0 4)(1 3)` (equivalently: fix 2 and
+preserve the pairs `{0,4}`, `{1,3}`), and `τ ∈ {σ, ρσ}`. D₄ is exactly the slice
+with `σ ∈ {identity, ρ}`; the other 24 elements are "warps" — such as *swap rows B↔D
+and columns 2↔4*, written in the board's own labels — that preserve every line
+without being a rigid motion.
 
-**Canonical position.** Number the cells `0..24` (`index(r,c) = 5·(r−1)+(c−1)`) and
+Under G the 25 possible seed cells fall into just **4 equivalence classes**, and —
+crucially — **every** seed has a stabilizer of order ≥ 4, so even an off-axis opening
+that D₄ leaves untouched still collapses ~4-fold at the root.
+
+Row and column positions are **0-based** throughout, matching the implementation.
+Board *labels* (rows `A`–`E`, columns `1`–`5`) are a separate, presentational layer:
+column label `2` is position `1`, and the warp above is `(1 3)` on columns.
+
+**Canonical position.** Number the cells `0..24` (`index(r,c) = 5r + c`) and
 represent a position as two 25-bit masks — mouse and snake (the seed is just a snake
 bit). Each of the 32 symmetries is a precomputed index permutation, so transforming
 a mask is a bit permutation. The **canonical key** is the numerically smallest of
@@ -1290,17 +1323,94 @@ mirroring the variety the random player and randomized openings (§5) bring — 
 seeded RNG keeps any given run reproducible. Perfection is unaffected: every move in
 the pool is equally optimal.
 
-### Performance and what is deferred
+### Where the table comes from
+
+The table is produced by an **offline retrograde solve** of the whole game: a forward
+pass enumerates every reachable non-terminal canonical position layer by layer, and a
+backward pass values those layers bottom-up from the endgame. Because G leaves only 4
+seed classes, four solves cover all 25 seeds.
+
+That solver is a separate program with separate needs — it uses numpy and a process
+pool, neither of which the player itself has any use for — and it is specified in its
+own document, **[`tools/solver/SPEC.md`](tools/solver/SPEC.md)**, together with the table
+file format. Nothing in this section depends on *how* the table was produced, only on
+what it contains.
+
+### The opening table
+
+Choosing a move at a position with `E` empty cells means valuing its children, which
+have `E−2` — so the layers the table *stores* sit two below the layers at which the
+player *moves*. It stores values for **22, 20, 18 and 16** empty cells, which covers
+the player's choices at **24, 22, 20 and 18**. From **16** empty cells down it
+live-searches. (Layer 24 is deliberately absent: nothing ever chooses at 26.)
+
+The threshold of 16 is set by measurement, not taste. Live search costs a median of
+~3 s (easy seed class) to ~7 s (hard) at 16 empties, but tens of seconds with a long
+tail at 18 — while each step shallower multiplies the table by roughly 5. Sixteen is
+the point where the table is still small and the search is still quick.
+
+A table is selected by the seed's **orbit representative**, so all 25 seeds are served
+by the four files. No move ever needs mapping between frames: the canonical key is
+invariant under G and the table stores only **values**, so the player generates
+children on the real board, canonicalizes each, and looks its value up directly. The
+seed determines only *which* file to load.
+
+The format is deliberately plain: it is read with `array` and searched with `bisect`,
+and may be gzipped (~6× smaller) — all standard library. That keeps the player free of
+any dependency the engine does not already have, which is worth something for a
+benchmark opponent that has to be easy to run; it is a preference, not a prohibition,
+and a large enough win would justify revisiting it. See `tools/solver/SPEC.md` for the
+layout.
+
+A **missing or unreadable table is not an error**, but it is always **reported**. The
+player falls back to searching the opening — correct, merely far too slow to be
+practical — so it remains usable and testable on a checkout that has not been given the
+solver's output. That fallback is announced on stderr, naming the directory searched,
+the filename expected, and the consequence: silence would be indistinguishable from a
+hang, since searching the opening can take hours per move. A table that cannot answer
+for *every* child of the current position is likewise refused wholesale in favour of
+the search, so a partial or mismatched table degrades to slow-and-right rather than
+fast-and-wrong.
+
+### The result: the game is a draw
+
+All four seed classes have been solved to completion. **Every one is a draw under
+perfect play** — so from all 25 seeds, with best play by both sides, Snakes and Mice
+is drawn, and neither the Mouse's first move nor the seeded snake confers a forced
+win.
+
+The opening is more strongly drawn than that summary suggests: **every position with
+20 or more empty cells is drawn**, whichever side is to move. The first forced wins
+appear at **18** empty cells, and even there they are a small minority — 4,075 of the
+64,440 positions in the C3 class. (Nothing can be *terminal* before 16 empty cells
+either: that is the first point at which a side holds five pieces, so the first at
+which a line can be completed at all.)
+
+Two consequences. **Every** first move by the Mouse, and every reply by the Snake, is
+equally optimal — all their children are drawn, so the choice cannot matter, and a
+uniformly random pick among them is exactly as good as any other. And the earliest a
+choice *can* matter is the Mouse's second move, where a minority of moves walk into
+one of those 18-empty wins for the Snake: 29,768 of 417,240 for the C3 class (7.1%),
+concentrated in 318 of its 2,196 positions. A win only ever arrives as a gift, and the
+perfect player's opening task is purely not to blunder.
+
+This settles, for the algorithmic player, the game-balance question §11 lists as out
+of scope: neither side is favoured under perfect play. It says nothing about balance
+between *fallible* players, which is what the benchmark actually measures.
+
+### Performance
 
 There is **no move-time budget**: the player plays perfectly however long that takes.
-The expectation, with the transposition table and order-32 canonicalization, is a
-first move (the most expensive one) in **seconds to a few minutes** on a typical
-developer machine; a first cut that is simple but slow is acceptable so long as it is
-not hours. Deliberately deferred: faster canonicalization (short-circuited
-comparison, per-symmetry caching, or incremental hashing); caching a best move per
-entry for stronger move ordering; and **persisting a solved result per opening
-class** — since G leaves only 4 seed classes, the whole game could be solved once and
-reused, but that is an optimization past the first working player.
+With the table installed, opening moves are effectively instant (a few milliseconds —
+they are lookups), and a whole perfect-vs-perfect game runs in **seconds**. The
+expensive move is the first one below the threshold, at 16 empties, which is seconds.
+Without a table the player still plays perfectly but the opening is impractical.
+
+Deliberately deferred: faster canonicalization (short-circuited comparison,
+per-symmetry caching, or incremental hashing); caching a best move per entry for
+stronger move ordering; and compressing the table beyond gzip (delta-encoded keys and
+packed values would roughly halve it, at the cost of a custom codec — see
+`tools/solver/SPEC.md`).
 
 ### Selecting and testing it
 
@@ -1319,6 +1429,14 @@ self-check and canonical-form invariance (all orbit members share a key); that t
 player **never loses a drawn-or-won position** and **never fails to win a won one**
 against an exhaustive or random opponent; and that G-equivalent seeds yield the same
 game value, so the symmetry reduction is sound.
+
+The two tiers are tested against each other, since the whole design rests on their
+agreeing: table values are re-derived by the live search and must match exactly, and a
+table-driven choice must achieve the same value the search would have found. Table
+tests build **synthetic** tables in a temp directory rather than depending on the
+solved ones, so the suite passes on any checkout; every seed is asserted to resolve to
+one of the four representatives; and a deliberately incomplete table is asserted to
+fall back to the search rather than answer from partial data.
 
 ## 11. Versioning & scope
 
@@ -1348,10 +1466,15 @@ progress toward that, not incidental churn.
   other, and against strong non-LLM players, over many games and score them. Other
   0.x milestones (e.g. a heuristic or MCTS player, §3) may ship first, but **1.0 is
   defined by the LLM-player + tournament pair**, regardless of what else arrives
-  before it. *(current)*
+  before it.
 - **After 1.0**, standard SemVer applies: incompatible changes to the player API
   or CLI bump the major, backward-compatible capabilities bump the minor, and
-  fixes bump the patch.
+  fixes bump the patch. Each minor so far:
+  - **1.1** — richer console observation, and `--watch none`.
+  - **1.2** — the snake's opening cell randomized per game (§2.4, §5).
+  - **1.3** — the **algorithmic player** (§10) made practical rather than merely
+    correct: the game solved offline for all four seed classes, and the opening
+    table the player reads instead of searching. *(current)*
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
@@ -1359,7 +1482,8 @@ player is specified in full in §10.
 
 Out of scope until at least 1.0, and possibly beyond:
 
-- Game-balance analysis (whether Snake or Mouse is favored, and how the seeded
-  opening cell affects that, §2.4).
+- Game-balance analysis between *fallible* players (whether Snake or Mouse is
+  favored in practice, and how the seeded opening cell affects that, §2.4). Under
+  **perfect** play the question is settled — every seed is a draw (§10).
 - Any GUI/TUI.
 - Network/remote play.

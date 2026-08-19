@@ -29,6 +29,7 @@ from ..board import LINES, Board
 from ..core import BOARD_SIZE, Cell, Move, MoveChoice, Side
 from .base import Player
 from .symmetry import CELL_COUNT, canonical_key
+from .table import PerfectTable, load_for_seed
 
 _FULL_MASK: int = (1 << CELL_COUNT) - 1
 """A mask with every cell bit set."""
@@ -79,11 +80,15 @@ class PerfectPlayer(Player):
         # caches only pure facts about positions, but §10 keeps the player free of
         # cross-game state, so it does not persist.
         self._tt: dict[int, tuple[int, int]] = {}
+        # Exact values for the opening plies, if the solver's output is installed.
+        # None means fall back to searching the opening: correct, just slow.
+        self._table: PerfectTable | None = None
 
     def start_game(self, side: Side, seed: Cell) -> None:
         self._side = side
         self._board = Board(seed)
         self._tt = {}
+        self._table = load_for_seed(seed)
 
     def observe_move(self, side: Side, move: Move) -> None:
         for cell in move.cells:
@@ -113,6 +118,12 @@ class PerfectPlayer(Player):
             # win, or it would have been found above).
             return MoveChoice(Move.of(_CELLS_BY_INDEX[empties[0]]))
 
+        # The opening is exact in the table and ruinous to search, so look the
+        # children up instead. Below the table's threshold the search is quick.
+        from_table: MoveChoice | None = self._choose_from_table(mouse, snake, empties)
+        if from_table is not None:
+            return from_table
+
         depth: int = (mouse.bit_count() + snake.bit_count() - 1) // 2
         ordered: list[int] = self._ordered(empties, mine, opponents)
 
@@ -136,6 +147,47 @@ class PerfectPlayer(Player):
                     -_WIN - 1,
                     _WIN + 1,
                 )
+            move: Move = Move.of(_CELLS_BY_INDEX[a], _CELLS_BY_INDEX[b])
+            if value > best:
+                best = value
+                pool = [move]
+            elif value == best:
+                pool.append(move)
+        return MoveChoice(self._rng.choice(pool))
+
+    def _choose_from_table(
+        self, mouse: int, snake: int, empties: list[int]
+    ) -> MoveChoice | None:
+        """Pick a move by looking every child up, or ``None`` to search instead.
+
+        Returns ``None`` whenever the table cannot answer for the whole move list —
+        no table installed, the children's layer is not covered, or any child is
+        missing — so a partial or mismatched table degrades to a slower *correct*
+        answer rather than a fast wrong one.
+
+        Callers must have handled winning moves already: this assumes no child ends
+        the game as a win, which holds because ``_winning_moves`` runs first.
+        """
+        assert self._side is not None
+        child_empties: int = len(empties) - 2
+        if self._table is None or not self._table.covers(child_empties):
+            return None
+
+        best: int = -_WIN - 1
+        pool: list[Move] = []
+        for a, b in combinations(empties, 2):
+            added: int = (1 << a) | (1 << b)
+            child_mouse: int = mouse | added if self._side is Side.MOUSE else mouse
+            child_snake: int = snake if self._side is Side.MOUSE else snake | added
+            if self._is_cats(child_mouse, child_snake):
+                value: int = 0
+            else:
+                stored: int | None = self._table.value(
+                    child_empties, canonical_key(child_mouse, child_snake)
+                )
+                if stored is None:
+                    return None
+                value = -stored
             move: Move = Move.of(_CELLS_BY_INDEX[a], _CELLS_BY_INDEX[b])
             if value > best:
                 best = value
