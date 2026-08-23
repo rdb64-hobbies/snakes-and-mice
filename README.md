@@ -113,9 +113,19 @@ The answer is always the same: **with best play on both sides, the game is a
 draw.** Neither side can force a win, no matter where the snake starts.
 
 That is what `perfect` plays. It can never be beaten, and it will never beat you
-unless you give it something — so a draw is always available to you. It is also
-more forgiving than it sounds: your first move never costs you anything,
-whichever side you are. The earliest you can go wrong is your second.
+unless you give it something — so a draw is always available to you, and your
+first move never costs you anything, whichever side you are. The earliest you can
+go wrong is your second.
+
+It is not passive about waiting for that, though. Because the game is drawn,
+almost every move it makes is a choice between options that are all equally
+optimal, and which one it plays cannot change the result against perfect defence.
+So it spends that free choice on you: among equally optimal moves it prefers the
+ones that leave you the most ways to go wrong, counting them exactly rather than
+guessing. It is still incapable of taking a risk to do it — every move it is
+choosing between is equally optimal, so nothing is gambled. Against a player
+moving at random, that takes it from winning about three games in five to winning
+about forty-nine in fifty.
 
 The answers are worked out ahead of time and stored in
 [`perfect-tables/`](perfect-tables/), which is why the player responds instantly

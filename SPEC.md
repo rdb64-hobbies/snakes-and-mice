@@ -1171,12 +1171,24 @@ minimax**:
 - if the position is lost against perfect defence, it plays a move that **delays the
   loss as long as possible**, maximizing the opponent's opportunities to err.
 
-The "win soonest / lose latest" tie-break matters for the benchmark: against a
-fallible LLM it converts winning positions into wins with the fewest chances for a
-swindle, and drags out lost ones so a mistaken opponent can still slip. Perfect
-play accounts for the **seeded snake** automatically — the seed is just a snake
-piece in the search, so whether a given opening is a forced win, loss, or draw for
-a side falls out of the search rather than being assumed.
+**The third case never actually happens.** It is stated for completeness, but this
+player is never asked to move in a lost position. Every seed is drawn (see "The
+result: the game is a draw" below), so a game starts drawn; the player never leaves a
+drawn position, and an opponent moving from a drawn position cannot manufacture a win
+out of it — so by induction every position it is handed is drawn or won. The rule
+still earns its keep at the *interior* nodes of the search, where lost positions are
+everywhere, and it costs nothing to state, since it falls straight out of the
+depth-folded score (see "Exact, depth-aware scoring"). The only way to reach it at the
+root would be to drop the player into a lost position it did not play itself into,
+which nothing in the engine does.
+
+So it is the **"win soonest" half** of the tie-break that acts in real games, and it
+matters for the benchmark: against a fallible LLM it converts winning positions into
+wins with the fewest chances for a swindle.
+
+Perfect play accounts for the **seeded snake** automatically — the seed is just a
+snake piece in the search, so whether a given opening is a forced win, loss, or draw
+for a side falls out of the search rather than being assumed.
 
 ### It is a mechanical player
 
@@ -1238,7 +1250,9 @@ never scored in its own right — under negamax it is simply the negation of the
 opponent's win. Folding `depth` in this way is what produces the tie-break behaviour
 above: among wins a **smaller** depth scores higher, so the player wins as quickly as
 it can; among losses `−(WIN − depth)` is less negative for a **larger** depth, so it
-resists as long as it can.
+resists as long as it can — behaviour the search relies on internally but the player
+never gets to display, since it is never handed a lost position (see the note under
+*What "perfect" means*).
 
 The search is a standard **negamax**: the value of a non-terminal node is the maximum
 over its legal moves of the terminal score (if the move ends the game) or
@@ -1315,13 +1329,102 @@ distinct permutations and that each maps the set of 12 line-index-sets onto itse
 
 ### Choosing among optimal moves
 
-Often several moves share the optimal value. The player collects **all** moves whose
-value equals the best and picks **uniformly at random** among them, using its
-injected `random.Random`. This keeps a match between two perfect players (or a
-perfect player and a deterministic opponent) from replaying one identical game —
-mirroring the variety the random player and randomized openings (§5) bring — while a
-seeded RNG keeps any given run reproducible. Perfection is unaffected: every move in
-the pool is equally optimal.
+Often — in this game, nearly always — several moves share the optimal value. The
+player collects **all** moves whose value equals the best, and then has a free
+choice: since every candidate has the same minimax value, narrowing the pool cannot
+cost a draw or a win, and the player remains exactly as perfect however it picks.
+
+Against perfect defence the choice is genuinely irrelevant. Against a **fallible**
+opponent it is not, and the benchmark only ever plays fallible opponents. So the
+pool is **ranked before the pick**, to maximize the opponent's opportunities to go
+wrong, and the random pick is applied to whatever survives.
+
+**The keys, strongest first.**
+
+1. **Trap count** — of the opponent's replies to this move, how many would throw the
+   position away (turn a draw into a loss for them, or let us escape a lost one).
+   This is not a heuristic: it is the exact quantity a swindle-seeking tie-break
+   wants, and it is *counted*, by valuing every reply. Only two-piece replies are
+   counted; a single-piece move is legal only when it ends the game (§2.5), and
+   neither of its forms can be a blunder in our favour.
+2. **Liveness** — our pieces in lines the opponent has not yet touched, with the
+   per-line count **squared**. A dead line can never be won, so pieces in it are
+   spent; the squaring is because threat value is sharply non-linear here — a move
+   places two pieces, so three of ours in a live line is already a win-next-turn
+   threat, making concentration worth far more than the same pieces spread thin.
+   This *is* a heuristic, standing in for the traps that lie deeper than one reply,
+   in the band where counting them exactly is too slow.
+3. **Uniformly at random**, from its injected `random.Random`, over whatever is left.
+
+**Every key stands aside where it cannot discriminate.** A key that ranks all
+candidates alike leaves the pool untouched, so the fallback is always the uniform
+random pick. That matters because the random pick is what keeps a match between two
+perfect players — or a perfect player and a deterministic opponent — from replaying
+one identical game, mirroring the variety the random player and randomized openings
+(§5) bring, while a seeded RNG keeps any given run reproducible. Ranking is allowed
+to reduce that variety only where it buys something real.
+
+Two gates enforce that, both set by measurement:
+
+- **Trap counting is skipped where it is provably vacuous or unaffordably slow.**
+  Vacuous: a node whose grandchildren all sit at **20 or more empty cells** has no
+  losing reply to find, since every such position is drawn (see "The result" below).
+  That is exactly the Mouse's first move — the widest node in the game (276 moves) —
+  so the gate saves the most expensive count *and* keeps the opening uniformly
+  random. Unaffordable: above the table's floor the extra ply is ruinous. Measured
+  here, valuing every grandchild costs **~18–23 s at 16 empty cells**, and the Mouse
+  chooses at 16 in nearly every game, so that alone would dominate every match; a
+  null-window test ("does this reply lose?" rather than "what is it worth?") does not
+  help, because proving *no* win exists costs nearly the full search anyway. So the
+  count runs only where the **table** already covers the grandchild layer — the
+  player's choices at 22 and 20 empty cells, at ~0.3–0.4 s — or where the position is
+  deep enough to search, at **14 empty cells and below**.
+
+  That last threshold is the one gate here **not** settled by a measured win, and is
+  called out as such. At 14 the count costs ~1.1 s on top of a ~0.4 s move, and only
+  the Snake ever chooses there (the Mouse's nodes are 24, 20, 16, 12, …), so it falls
+  on a single move of the minority of games that reach it — ~46% of a bulk match
+  against the instant `random` player, but nothing beside an LLM's own per-move
+  latency, which is the matchup the player exists for. It is not a no-op: at 14 the
+  count discriminates in ~94% of decisions and changes the surviving candidates in
+  ~34%. What it is *worth* is untested, because `random` leaves no headroom (the
+  player already wins ~98% without it) and the project has no mid-strength fallible
+  opponent to measure against.
+- **Liveness is gated to 18 empty cells and below.** It is a deterministic key, so
+  letting it decide the opening would replay one game per seed. By 18 the position
+  has already branched widely enough that a deterministic choice cannot funnel every
+  game into the same line.
+
+A table that cannot value *every* reply is refused wholesale, exactly as it is for
+the move choice itself (§"The opening table"): the pool is left unranked rather than
+ranked on partial data.
+
+**What this is worth.** Against the random player — a maximally fallible opponent, so
+its loss rate is a direct estimate of P(the opponent goes wrong) — ranking lifts the
+perfect player from **62.3%** wins to **98.0%**, measured over 300 games per policy
+(150 in each seat, with openings and the opponent's RNG seeded identically across
+policies). Read the other way round, it cuts the games it fails to win from 37.7% to
+2.0%, an eighteen-fold reduction; and it **never loses a game under any policy**, as
+it cannot. Both keys earn their place — the exact trap count does most of the work
+(62.3% → 93.3%) and the liveness heuristic supplies the rest (93.3% → 98.0%):
+
+| policy | won | drew | lost | win% |
+| --- | --- | --- | --- | --- |
+| `RANDOM` (unranked) | 187 | 113 | 0 | 62.3% |
+| `TRAPS` | 280 | 20 | 0 | 93.3% |
+| `FULL` | 294 | 6 | 0 | 98.0% |
+
+It is also *faster* — 912 s down to 318 s for the 150 Mouse-seat games — because won
+games end sooner and so reach fewer deep searches.
+
+Ranking is **not configurable**: the player always ranks. A selectable policy would
+make `perfect` mean two different strengths under one name, and a results file
+identifies a player by name alone (§6) — so the yardstick would stop being calibrated
+(§1). Re-running the comparison after a change to the keys is a job for a throwaway
+subclass overriding the pick, not for shipped API. The caveat on the numbers is that a
+random opponent misses traps uniformly, whereas an LLM misses *subtle* ones; trap
+density is the best available proxy for that, not a model of it, so the gain against a
+model will differ.
 
 ### Where the table comes from
 
@@ -1387,12 +1490,23 @@ either: that is the first point at which a side holds five pieces, so the first 
 which a line can be completed at all.)
 
 Two consequences. **Every** first move by the Mouse, and every reply by the Snake, is
-equally optimal — all their children are drawn, so the choice cannot matter, and a
-uniformly random pick among them is exactly as good as any other. And the earliest a
-choice *can* matter is the Mouse's second move, where a minority of moves walk into
-one of those 18-empty wins for the Snake: 29,768 of 417,240 for the C3 class (7.1%),
-concentrated in 318 of its 2,196 positions. A win only ever arrives as a gift, and the
-perfect player's opening task is purely not to blunder.
+equally optimal — all their children are drawn, so *against perfect defence* the
+choice cannot matter, and a uniformly random pick among them is exactly as good as
+any other. And the earliest a choice *can* matter is the Mouse's second move, where a
+minority of moves walk into one of those 18-empty wins for the Snake: 29,768 of
+417,240 for the C3 class (7.1%), concentrated in 318 of its 2,196 positions. A win
+only ever arrives as a gift, and the perfect player's opening task is purely not to
+blunder.
+
+Against a fallible opponent the second consequence reads differently, and it is what
+the tie-break above exploits. Those 7.1% of losing Mouse replies are **not evenly
+spread**: only 318 of the 2,196 positions contain any at all, so the Snake's first
+move — value-irrelevant though it is — decides whether the Mouse is offered a real
+chance to go wrong or none whatever. It is the first ply at which ranking has any
+effect, and the effect is large: choosing the trappiest reply routinely leaves the
+Mouse with a large majority of losing moves to avoid, against a 7.1% base rate. The
+Mouse's *first* move remains the one place where nothing can be gained, since its
+grandchildren are all drawn too — which is why it is left uniformly random.
 
 This settles, for the algorithmic player, the game-balance question §11 lists as out
 of scope: neither side is favoured under perfect play. It says nothing about balance
@@ -1474,7 +1588,13 @@ progress toward that, not incidental churn.
   - **1.2** — the snake's opening cell randomized per game (§2.4, §5).
   - **1.3** — the **algorithmic player** (§10) made practical rather than merely
     correct: the game solved offline for all four seed classes, and the opening
-    table the player reads instead of searching. *(current)*
+    table the player reads instead of searching.
+  - **1.4** — the algorithmic player made *dangerous* as well as perfect (§10,
+    "Choosing among optimal moves"): among equally optimal moves it now prefers
+    those giving a fallible opponent the most ways to go wrong, cutting the games it
+    fails to win against the random player from 37.7% to 2.0% — while still never
+    putting the draw at risk, since every candidate ranked is equally optimal.
+    *(current)*
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
