@@ -375,10 +375,17 @@ class ConsoleObserver(Observer):
         return "  ".join(parts)
 
     def on_match_end(self, result: MatchResult) -> None:
-        if self._num_games <= 1:
+        # A lone game's own result already says everything the tally would — but
+        # only where it was printed. At MATCH level on_game_end prints nothing, so
+        # there the tally is the run's only report.
+        if self._num_games <= 1 and self.level >= ObservationLevel.GAME:
             return
-        if self.level < ObservationLevel.GAME:
+        summary: str = describe_match_result(result)
+        if self.level >= ObservationLevel.GAME:
+            print(f"\n{summary}")
+        elif self._num_games > 1:
             # MATCH level: overwrite the in-place game-status line with the tally.
-            print(f"\r\x1b[K{describe_match_result(result)}")
+            print(f"\r\x1b[K{summary}")
         else:
-            print(f"\n{describe_match_result(result)}")
+            # MATCH level, one game: on_game_start drew no status line to overwrite.
+            print(summary)

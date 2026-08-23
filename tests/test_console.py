@@ -77,6 +77,33 @@ def test_watch_game_shows_boundaries_not_moves(
     assert "Match complete" in out  # and the closing tally
 
 
+def test_watch_match_reports_a_single_game_match(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # At MATCH level nothing is printed per game, so the closing tally is the only
+    # report a one-game run gets. Suppressing it as redundant (which it is at GAME
+    # and MOVE, where the game result is printed) left `--games 1 --watch match`
+    # showing the banner and no outcome whatsoever.
+    mouse, snake = _mouse_wins_row_a()
+    play_match(mouse, snake, 1, ConsoleObserver(ObservationLevel.MATCH))
+    out = capsys.readouterr().out
+
+    assert "Match complete — 1 game" in out
+    assert "(mouse): 1 win" in out  # and who actually won it
+
+
+def test_watch_game_omits_the_tally_for_a_single_game(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Where the per-game result IS printed, a one-game tally would only repeat it.
+    mouse, snake = _mouse_wins_row_a()
+    play_match(mouse, snake, 1, ConsoleObserver(ObservationLevel.GAME))
+    out = capsys.readouterr().out
+
+    assert "(mouse) wins." in out
+    assert "Match complete" not in out
+
+
 def test_watch_match_shows_only_banner_and_tally(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
