@@ -1420,8 +1420,10 @@ games end sooner and so reach fewer deep searches.
 Ranking is **not configurable**: the player always ranks. A selectable policy would
 make `perfect` mean two different strengths under one name, and a results file
 identifies a player by name alone (§6) — so the yardstick would stop being calibrated
-(§1). Re-running the comparison after a change to the keys is a job for a throwaway
-subclass overriding the pick, not for shipped API. The caveat on the numbers is that a
+(§1). The unranked baseline is instead reconstructed outside the player, by a
+throwaway subclass that restores the old pick;
+[`tools/bench_tie_break.py`](tools/bench_tie_break.py) does exactly that, and is how
+this comparison is re-run whenever the keys or their gates change. The caveat on the numbers is that a
 random opponent misses traps uniformly, whereas an LLM misses *subtle* ones; trap
 density is the best available proxy for that, not a model of it, so the gain against a
 model will differ.
