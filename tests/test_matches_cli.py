@@ -39,7 +39,8 @@ def _patch_runner(monkeypatch: pytest.MonkeyPatch, roster: Roster) -> None:
     monkeypatch.setattr("snakes_and_mice.matches_cli.load_environment", lambda: None)
 
     def fake_make_player(
-        kind: str, side: Side, roster_: Roster | None, log_dir: Path | None
+        kind: str, side: Side, roster_: Roster | None, log_dir: Path | None,
+        *, prune_thinking: bool = False,
     ) -> Player:
         return RandomPlayer(name=kind)
 

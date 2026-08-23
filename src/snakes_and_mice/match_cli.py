@@ -17,6 +17,7 @@ from pathlib import Path
 from .cli_common import (
     DEFAULT_LOG_DIR,
     DEFAULT_RESULTS_PATH,
+    add_prune_thinking_argument,
     add_seed_argument,
     add_watch_argument,
     make_observer,
@@ -67,6 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         help="number of games in the match (default: 1)",
     )
     add_watch_argument(parser, default="move")
+    add_prune_thinking_argument(parser)
     add_seed_argument(parser)
     parser.add_argument(
         "--log-llm", nargs="?", const=DEFAULT_LOG_DIR, default=None, metavar="DIR",
@@ -107,8 +109,14 @@ def main(argv: list[str] | None = None) -> None:
         if needs_roster:
             load_environment()
             roster = load_roster()
-        mouse: Player = make_player(args.mouse, Side.MOUSE, roster, log_dir)
-        snake: Player = make_player(args.snake, Side.SNAKE, roster, log_dir)
+        mouse: Player = make_player(
+            args.mouse, Side.MOUSE, roster, log_dir,
+            prune_thinking=args.prune_thinking,
+        )
+        snake: Player = make_player(
+            args.snake, Side.SNAKE, roster, log_dir,
+            prune_thinking=args.prune_thinking,
+        )
     except ConfigError as exc:
         parser.error(str(exc))
 

@@ -55,10 +55,12 @@ def quiet_http_logging() -> None:
 
 
 def make_player(
-    kind: str, side: Side, roster: Roster | None, log_dir: Path | None
+    kind: str, side: Side, roster: Roster | None, log_dir: Path | None,
+    *, prune_thinking: bool = False,
 ) -> Player:
     """Build the player for one side. ``kind`` is ``random``, ``human``,
-    ``perfect``, or an LLM roster name (in which case ``roster`` must be loaded)."""
+    ``perfect``, or an LLM roster name (in which case ``roster`` must be loaded).
+    ``prune_thinking`` applies only to LLM players (§4)."""
     if kind == "human":
         return HumanPlayer(name=SECOND_PERSON)
     if kind == "random":
@@ -66,7 +68,19 @@ def make_player(
     if kind == "perfect":
         return PerfectPlayer(name=PERFECT_NAME[side])
     assert roster is not None  # a roster is loaded whenever an LLM name is used
-    return LLMPlayer.from_roster(kind, roster, log_dir=log_dir)
+    return LLMPlayer.from_roster(
+        kind, roster, prune_thinking=prune_thinking, log_dir=log_dir
+    )
+
+
+def add_prune_thinking_argument(parser: argparse.ArgumentParser) -> None:
+    """Add the shared ``--prune-thinking`` opt-in (§4, "Pruning re-sent
+    reasoning"), off by default."""
+    parser.add_argument(
+        "--prune-thinking", action="store_true",
+        help="strip earlier turns' reasoning text from each LLM request, to slow "
+             "context growth over a long match (default: off)",
+    )
 
 
 def add_watch_argument(parser: argparse.ArgumentParser, *, default: str) -> None:

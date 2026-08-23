@@ -20,6 +20,7 @@ from pathlib import Path
 
 from .cli_common import (
     DEFAULT_RESULTS_PATH,
+    add_prune_thinking_argument,
     add_seed_argument,
     add_watch_argument,
     make_observer,
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> None:
         help="number of games in each match (default: 1)",
     )
     add_watch_argument(parser, default="game")
+    add_prune_thinking_argument(parser)
     add_seed_argument(parser)
     parser.add_argument(
         "--tournament-results", type=Path, default=DEFAULT_RESULTS_PATH, metavar="FILE",
@@ -138,8 +140,14 @@ def main(argv: list[str] | None = None) -> None:
         for index, (mouse_name, snake_name) in enumerate(schedule, start=1):
             print(f"\n### Match {index}/{total}: {mouse_name} (mouse) "
                   f"vs {snake_name} (snake) ###")
-            mouse: Player = make_player(mouse_name, Side.MOUSE, roster, None)
-            snake: Player = make_player(snake_name, Side.SNAKE, roster, None)
+            mouse: Player = make_player(
+                mouse_name, Side.MOUSE, roster, None,
+                prune_thinking=args.prune_thinking,
+            )
+            snake: Player = make_player(
+                snake_name, Side.SNAKE, roster, None,
+                prune_thinking=args.prune_thinking,
+            )
             result: MatchResult = play_match(
                 mouse, snake, args.games, make_observer(args.watch), opening
             )

@@ -1,33 +1,21 @@
-"""The LLM player: chooses moves by querying a large language model.
+"""The LLM player: chooses moves by querying a large language model. See §4.
 
-This is the player type the project exists to compare (§4). It wraps a single
-Pydantic AI :class:`~pydantic_ai.Agent` bound to one model and keeps **one
-message thread that spans every game it plays**, so the model accumulates
-context across games — including how earlier games ended — and can learn from a
-mistake with no change to the :class:`Player` interface.
+:class:`LLMPlayer` wraps one Pydantic AI :class:`~pydantic_ai.Agent` and keeps a
+single message thread spanning every game it plays. ``start_game``,
+``observe_move`` and ``end_game`` only *enqueue* messages; ``choose_move`` flushes
+them as one user turn, runs the agent, and returns the parsed move.
 
-The model is given as little help as possible: it sees only the opponent's moves
-(via :meth:`observe_move`) and must track the board, find lines, and assess the
-outcome of its own move itself. No network call is made except when a move is
-actually needed — :meth:`start_game`, :meth:`observe_move`, and :meth:`end_game`
-only *enqueue* messages, which are flushed as the next user turn on the following
-:meth:`choose_move`. There are no retries within a game: an illegal or unusable
-move ends the game, and the consequence is delivered as feedback in the *next*
-game's opening (§4, "No retries").
-
-All Pydantic AI knowledge lives here, and nowhere else in the project: the
-``(provider, model)`` → model mapping (:func:`resolve_model`), the agent's output
-mode, effort level, and history processing (:func:`resolve_agent`,
-:func:`strip_prior_thinking`), and the alternate constructor that turns a roster
-entry into a ready player (:meth:`LLMPlayer.from_roster`). The
-:mod:`~snakes_and_mice.config` module supplies only the parsed
-:class:`~snakes_and_mice.config.Roster`; it neither imports ``pydantic_ai`` nor
-knows what a model is.
+This module also holds the ``(provider, model)`` → agent resolution
+(:func:`resolve_model`, :func:`resolve_agent`) and the constructor that builds a
+player from a roster entry (:meth:`LLMPlayer.from_roster`), so it is the only
+module in the project that imports ``pydantic_ai``;
+:mod:`~snakes_and_mice.config` supplies just the parsed roster.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -77,9 +65,8 @@ from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
 from .prompts import FAULT_ADVICE, RULES_PREAMBLE
 
-# Built-in providers Pydantic AI supports directly, each with the environment
-# variable that holds its key (§4, "Model selection"). Custom OpenAI-compatible
-# providers are declared in providers.yaml instead and are not listed here.
+# Built-in providers, each with the environment variable holding its key (§4,
+# "Model selection"). Custom endpoints come from providers.yaml instead.
 _BUILTIN_KEY_ENV: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -91,41 +78,27 @@ ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
 """Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
 
 DEFAULT_THINKING: ThinkingLevel = "high"
-"""The global default reasoning effort every LLM player uses (§4). ``high``
-rather than ``xhigh`` keeps strong reasoning without the steep cost of the top
-tier."""
+"""The one reasoning effort every LLM player runs at (§4, "Thinking / effort
+level"). Not all providers accept it; see :func:`_warn_if_thinking_unsupported`."""
 
 MAX_OUTPUT_TOKENS: int = 16384
-"""Upper bound on tokens per response. Pydantic AI's default cap is 4096, and on
-Anthropic that ceiling covers the thinking *and* the answer together — at high
-effort the reasoning alone can approach it and clip the trailing JSON, which then
-fails to parse and faults as UNPARSEABLE_OUTPUT. A generous cap leaves room for
-both; only tokens actually produced are billed, so raising it costs nothing on a
-short answer."""
+"""Cap on tokens per response, well above Pydantic AI's 4096 default (§4,
+"Structured output")."""
 
 # Providers whose structured output must use the model's native JSON-schema
-# response format instead of an output tool. Anthropic forbids combining an
-# output tool with thinking, so it needs native output; the others were validated
-# with Pydantic AI's default tool-based output and keep it.
+# response format rather than an output tool (§4, "Structured output").
 _NATIVE_OUTPUT_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
-# Some failures of a provider call are operational — neither the model's play nor
-# a configuration error: a dropped connection or timeout, a rate-limit or server
-# (5xx) error, or a malformed/truncated response body. All are worth retrying, so
-# choose_move retries a few times with exponential backoff before giving up and
-# voiding the game as a no-contest. They reach us in different shapes across
-# providers — a raw httpx error (Gemini's SDK), a bare ModelAPIError wrapping one
-# (the OpenAI/Anthropic SDKs), an HTTP-status ModelHTTPError, or a raw
-# json.JSONDecodeError from the HTTP layer — so choose_move classifies them by
-# *behavior* rather than by exception type.
+# A transient transport failure is retried before the game is voided as a
+# no-contest (§4, "No retries"). Providers surface the same condition in different
+# exception shapes, so choose_move classifies by behavior, not by exception type.
 _MAX_ATTEMPTS: int = 3
-# Seconds to wait before each retry; one entry per gap between attempts, so its
-# length is _MAX_ATTEMPTS - 1. Exponential so a brief blip clears quickly while a
-# longer wobble still gets a real pause.
+# Seconds to wait before each retry; one entry per gap, so length is
+# _MAX_ATTEMPTS - 1.
 _RETRY_BACKOFF: tuple[float, ...] = (1.0, 4.0)
 
-# HTTP statuses worth retrying: a request timeout (408), a rate-limit (429), or
-# any server error (5xx). Other 4xx are client/config problems no retry fixes.
+# Statuses worth retrying: request timeout, rate-limit, and any 5xx. Other 4xx are
+# config problems no retry fixes.
 _TRANSIENT_STATUS_CODES: frozenset[int] = frozenset({408, 429})
 
 
@@ -136,18 +109,13 @@ def _is_transient_status(status_code: int) -> bool:
 
 
 class ModelRequestError(SnakesAndMiceError):
-    """The call to a model's provider failed for a reason that no retry fixes and
-    that is not a game fault — a misspelled or unavailable model, a rejected key,
-    or a capability mismatch. It is an environment/configuration error, broken for
-    every game rather than one, so it does *not* end a single game: it propagates
-    past :func:`~snakes_and_mice.game.play_game` and
-    :func:`~snakes_and_mice.match.play_match` uncaught, up to the entry point,
-    which catches it and reports one clear message (see :func:`..cli.main`).
+    """A provider call failed for a reason no retry fixes — a bad model name, a
+    rejected key, a capability mismatch.
 
-    Contrast the two conditions the engine *does* turn into a
-    :class:`~snakes_and_mice.result.GameResult`: :class:`MoveUnavailable` (a
-    fault) and :class:`PlayerUnavailable` (a transient transport failure that
-    outlasted its retries — a no-contest abort, not run-fatal)."""
+    Deliberately *not* caught by ``play_game`` / ``play_match``: it is broken for
+    every game, so it propagates to the CLI entry point, which reports it. Contrast
+    :class:`MoveUnavailable` (a fault) and :class:`PlayerUnavailable` (a no-contest
+    abort), both of which the engine turns into a ``GameResult``."""
 
 
 class LLMMove(BaseModel):
@@ -232,43 +200,25 @@ def _require_key_env(env_var: str) -> str:
 
 
 def _is_bulk_reasoning(part: ThinkingPart) -> bool:
-    """Whether ``part`` is verbatim reasoning text safe to drop from a re-sent
-    history — as opposed to a linked reasoning *item* that must be kept.
+    """Whether ``part`` is reasoning text safe to drop from a re-sent history.
 
-    The distinction is by shape, not provider, and the logs bear out three cases:
+    Two clauses (§4, "Pruning re-sent reasoning"): it must have text — which alone
+    excludes OpenAI's and Anthropic's empty-content parts — and carry no signature,
+    which the provider needs back when the turn is re-sent.
 
-    * Gemini emits its thought summary as plain text (hundreds–thousands of chars)
-      with no ``id`` or ``signature``. This is the payload worth stripping: it is
-      self-contained, so removing it leaves a valid history.
-    * OpenAI's Responses API and Anthropic emit an *empty-content* part carrying an
-      ``id`` and/or ``signature`` that a following item references. Stripping it
-      saves nothing (there is no text) and breaks the re-sent history — OpenAI
-      rejects the dangling reference with HTTP 400 — so it must be kept.
-
-    So strip only a part that has text *and* no provider id/signature."""
-    return bool(part.content) and part.id is None and part.signature is None
+    ``part.id`` is deliberately not tested: on an OpenAI-compatible endpoint it is
+    the name of the field the reasoning arrived in, not a provider handle.
+    """
+    return bool(part.content) and part.signature is None
 
 
 def strip_prior_thinking(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """Drop bulky reasoning text from earlier turns before each model request.
+    """Drop earlier turns' reasoning text from a request, keeping the rest intact.
 
-    A single LLM player keeps one message thread spanning the whole match (§4), and
-    every provider re-sends that entire thread as input on each turn. A reasoning
-    model's own past chain-of-thought can dominate that payload — for Gemini, which
-    returns its full thought summary as text, it is the bulk of the accumulated input
-    tokens, growing super-linearly over a match and capping how many games fit — yet
-    it is not needed to keep playing: the board is fully reconstructible from the move
-    list, and the model reasons afresh (still at full effort) every turn. Stripping
-    that prior reasoning from what is *sent* cuts the context back to near-flat growth
-    without lowering the thinking level.
-
-    Only self-contained reasoning *text* is stripped (see :func:`_is_bulk_reasoning`);
-    linked reasoning items (OpenAI/Anthropic, carrying an id/signature) are left in
-    place — they cost nothing to keep and removing them would invalidate the history.
-
-    This is attached as a :class:`ProcessHistory` capability, so it rewrites only the
-    request payload; the player's stored thread — and thus the ``--log-llm`` dump —
-    keeps the full thinking for debugging.
+    Attached as a :class:`ProcessHistory` capability only when ``--prune-thinking``
+    is given, so it rewrites the request payload and never the player's stored
+    thread or its ``--log-llm`` dump. Off by default — §4, "Pruning re-sent
+    reasoning", for why.
     """
     stripped: list[ModelMessage] = []
     for message in messages:
@@ -284,28 +234,43 @@ def strip_prior_thinking(messages: list[ModelMessage]) -> list[ModelMessage]:
     return stripped
 
 
+def _warn_if_thinking_unsupported(spec: PlayerSpec, model: Model) -> None:
+    """Note on stderr that this model's profile will not accept a thinking level,
+    so :data:`DEFAULT_THINKING` is silently dropped and the server's own default
+    applies instead. Never fails the run — §4, "Thinking / effort level".
+    """
+    if not model.profile.get("supports_thinking", False):
+        print(
+            f"note: player {spec.name!r} — {spec.provider} does not accept a "
+            f"thinking level for model {spec.model!r}; its effort is whatever the "
+            f"server defaults to",
+            file=sys.stderr,
+        )
+
+
 def resolve_agent(
     spec: PlayerSpec,
     providers: dict[str, ProviderSpec],
     *,
     thinking: ThinkingLevel = DEFAULT_THINKING,
+    prune_thinking: bool = False,
 ) -> Agent[None, LLMMove]:
     """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
 
-    Provider knowledge lives here, not in the player's own methods: the model is
-    resolved and then wrapped in an agent whose output mode fits the provider —
-    native JSON-schema output where an output tool cannot coexist with thinking
-    (Anthropic), the default tool-based output everywhere else — so the player
-    itself only drives the message thread and reads back an :class:`LLMMove`.
-    ``retries=0`` (both branches) enforces §4's "no re-prompting within a game".
-    Every agent carries the :func:`strip_prior_thinking` history processor to keep
-    a long match's context from ballooning with re-sent past reasoning.
+    The model is wrapped in an agent whose output mode fits the provider — native
+    JSON-schema output for :data:`_NATIVE_OUTPUT_PROVIDERS`, the default tool-based
+    output elsewhere (§4, "Structured output").
+    ``retries=0`` (both branches) enforces §4's "no re-prompting within a game", and
+    ``prune_thinking`` attaches the :func:`strip_prior_thinking` history processor.
     """
     model: Model = resolve_model(spec, providers)
+    _warn_if_thinking_unsupported(spec, model)
     settings: ModelSettings = ModelSettings(
         thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS
     )
-    capabilities: list[ProcessHistory[None]] = [ProcessHistory(strip_prior_thinking)]
+    capabilities: list[ProcessHistory[None]] = (
+        [ProcessHistory(strip_prior_thinking)] if prune_thinking else []
+    )
     if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
         return Agent(
             model=model,
@@ -354,6 +319,7 @@ class LLMPlayer(Player):
         roster: Roster,
         *,
         thinking: ThinkingLevel = DEFAULT_THINKING,
+        prune_thinking: bool = False,
         log_dir: Path | None = None,
     ) -> LLMPlayer:
         """Build the player for roster entry ``name`` — the usual constructor.
@@ -371,7 +337,7 @@ class LLMPlayer(Player):
                 f"available: {', '.join(sorted(roster.players)) or '(none)'}"
             )
         agent: Agent[None, LLMMove] = resolve_agent(
-            spec, roster.providers, thinking=thinking
+            spec, roster.providers, thinking=thinking, prune_thinking=prune_thinking
         )
         return cls(agent, name=spec.name, log_dir=log_dir)
 
@@ -404,26 +370,18 @@ class LLMPlayer(Player):
         # A transient operational failure is retried (see _MAX_ATTEMPTS); every
         # other outcome resolves on the first attempt, returning or raising below.
         for attempt in range(_MAX_ATTEMPTS):
-            # capture_run_messages records the exchange even when the run raises,
-            # so a response that fails validation is still available to us here —
-            # see the UnexpectedModelBehavior handler. It captures only the first
-            # run within its scope; a fresh scope per attempt keeps each retry's
-            # exchange separate.
+            # capture_run_messages keeps the exchange even when the run raises, so
+            # a response that failed validation is still readable below. It captures
+            # only the first run in its scope, hence a fresh scope per attempt.
             with capture_run_messages() as captured:
                 try:
                     result = self._agent.run_sync(
                         user_prompt, message_history=self._history
                     )
                 except UnexpectedModelBehavior as exc:
-                    # The model produced no usable move; with no retries that ends
-                    # the game as a fault. Persist the exchange first — including the
-                    # response captured above — so it reaches the log for debugging
-                    # and stays in the thread, letting the next game's fault feedback
-                    # point at what actually happened rather than at nothing. A
-                    # response truncated at the output-token limit (finish_reason
-                    # "length", e.g. thinking that ran to the cap) is a distinct
-                    # fault from genuinely malformed output, and gets its own
-                    # feedback (think more briefly).
+                    # No usable move: a fault that ends the game. Record the turn
+                    # first so the log and the next game's feedback can point at what
+                    # the model actually produced.
                     self._record_failed_turn(user_prompt, captured)
                     reason: PlayerFaultReason = (
                         PlayerFaultReason.THINKING_LIMIT_EXCEEDED
@@ -432,25 +390,9 @@ class LLMPlayer(Player):
                     )
                     raise MoveUnavailable(reason, str(exc)) from exc
                 except Exception as exc:
-                    # Any other failure from the provider call, split two ways by
-                    # *behavior* — because pydantic-ai and the provider SDKs surface
-                    # the same underlying condition in different exception shapes:
-                    #
-                    #  - A configuration error no retry can fix — a rejected key, an
-                    #    unknown/unavailable model, a capability mismatch (UserError),
-                    #    or any non-transient HTTP status — is broken for every game,
-                    #    so it aborts the whole run with one clear message
-                    #    (ModelRequestError), not a per-game outcome.
-                    #  - Everything else is operational and transient: a connection
-                    #    drop or timeout (a raw httpx error from Gemini's SDK, or a
-                    #    bare ModelAPIError wrapping one from the OpenAI/Anthropic
-                    #    SDKs), a rate-limit or 5xx, or a malformed/truncated response
-                    #    body (a raw json.JSONDecodeError from the HTTP layer, seen
-                    #    from flaky gateways). None is the model's play and none is a
-                    #    config problem, so we retry with backoff and, if it persists,
-                    #    void just this game as a no-contest (PlayerUnavailable ->
-                    #    ABORTED) — never charging the player, never aborting the
-                    #    match, and never letting a raw traceback escape.
+                    # Every other provider failure, split by behavior: a config
+                    # error aborts the run, anything else is transient — retry, then
+                    # void this game as a no-contest (§4, "No retries").
                     if self._is_config_fatal(exc):
                         raise ModelRequestError(
                             self._describe_backend_error(exc)
@@ -460,13 +402,9 @@ class LLMPlayer(Player):
                     self._record_failed_turn(user_prompt, captured)
                     raise PlayerUnavailable(self._describe_unreachable(exc)) from exc
 
-            # Append only this turn's new messages to the thread we already hold.
-            # We must NOT rebuild from result.all_messages(): the
-            # strip_prior_thinking capability rewrites the history all_messages()
-            # reports too, so overwriting our thread with it would progressively
-            # erase earlier turns' thinking from the stored thread and the log.
-            # new_messages() carries the current turn's response with its thinking
-            # intact — only *prior* turns are stripped, and only on the wire.
+            # Extend with this turn only. NOT result.all_messages(): under
+            # --prune-thinking that reports the stripped history, so rebuilding from
+            # it would erase earlier turns' thinking from our thread and the log.
             self._history.extend(result.new_messages())
             self._write_log()
 
@@ -480,20 +418,14 @@ class LLMPlayer(Player):
     def _record_failed_turn(
         self, user_prompt: str, captured: list[ModelMessage]
     ) -> None:
-        """Persist a turn that raised — a fault or a transient failure — to the
-        thread and the log, on a path where no ``result`` object is available.
+        """Persist a turn that raised to the thread and the log, on a path where no
+        ``result`` object exists.
 
-        We must NOT recover the new turn by slicing ``captured`` at
-        ``len(self._history)``. ``capture_run_messages`` reports the *wire* history,
-        which pydantic-ai builds by running :func:`strip_prior_thinking` and
-        then dropping the now-empty reasoning-only responses it leaves behind — so
-        ``captured`` can be strictly *shorter* than our unstripped thread, making a
-        length-based slice select nothing and silently lose the turn (a mid-match
-        unparseable fault vanished from the log this way). Instead reconstruct the
-        turn from what we know it was: the prompt we sent, plus the model's response,
-        which is always the tail of ``captured``. The response is kept verbatim (its
-        thinking intact) so the log stays complete and the next game's fault feedback
-        can point at what the model actually produced.
+        The turn is rebuilt from the prompt we sent plus the model's response, which
+        is the tail of ``captured``. Do NOT instead slice ``captured`` at
+        ``len(self._history)``: ``capture_run_messages`` reports the *wire* history,
+        which can be shorter than our unstripped thread, so a length-based slice can
+        select nothing and silently lose the turn.
         """
         self._history.append(ModelRequest(parts=[UserPromptPart(content=user_prompt)]))
         if captured and isinstance(captured[-1], ModelResponse):
@@ -504,24 +436,13 @@ class LLMPlayer(Player):
 
     def _close_dangling_tool_calls(self, response: ModelResponse) -> None:
         """Follow any tool-call in a just-recorded faulting ``response`` with a
-        synthetic tool-return, so the stored thread stays a well-formed message
-        history the provider will accept when it is re-sent next game.
+        synthetic tool-return, leaving the stored thread a well-formed history the
+        provider will accept next game (§4, "No retries").
 
-        An unparseable-output fault can take the shape of a ``final_result`` tool-call
-        whose arguments failed validation (e.g. a mistyped field name). Because the
-        player runs with no retries (§4), pydantic-ai raises *before* emitting the
-        tool-return that would normally close that call, so the response we persist
-        ends in a tool-call with no matching return. Left unclosed, re-sending the
-        thread makes the provider reject the whole request ("cannot provide a new user
-        prompt when the message history contains unprocessed tool calls"), which would
-        abort the next game — and, misread as a backend error, the whole match.
-
-        ``_record_failed_turn`` is the *only* place a dangling call can enter the
-        thread (the success path extends from ``new_messages()``, always well-formed),
-        and the offending call is in the response we just appended — so this is the one
-        spot that needs the repair, done once, here. The faulting response itself is
-        kept verbatim (its broken args intact) for the log and the next game's fault
-        feedback; only a closing tool-return is added after it.
+        ``_record_failed_turn`` is the only place a dangling call can enter the
+        thread — the success path extends from ``new_messages()``, always
+        well-formed — so the repair belongs here, once. The response itself is kept
+        verbatim; only the closing return is added.
         """
         closers: list[ModelRequestPart] = [
             ToolReturnPart(

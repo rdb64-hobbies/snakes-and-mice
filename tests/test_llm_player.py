@@ -617,6 +617,15 @@ def test_message_logging_writes_replayable_thread(tmp_path: Path) -> None:
 # --- Resolving a roster entry to a model, an agent, and a player ---------------
 
 
+def _history_processors(agent: Agent[None, LLMMove]) -> list[object]:
+    """The history processors attached to ``agent``, if any."""
+    return [
+        c.processor
+        for c in agent.root_capability.capabilities
+        if isinstance(c, ProcessHistory)
+    ]
+
+
 def test_resolve_builtin_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
@@ -698,12 +707,11 @@ def test_strip_prior_thinking_removes_thinking_keeps_the_rest() -> None:
     assert [type(p).__name__ for p in response.parts] == ["ThinkingPart", "TextPart"]
 
 
-def test_strip_prior_thinking_keeps_linked_reasoning_items() -> None:
-    # OpenAI's Responses API and Anthropic emit empty-content reasoning parts that
-    # carry an id/signature a following item references. These must survive the
-    # stripper: removing them saves nothing (no text) and invalidates the re-sent
-    # history — OpenAI rejects the dangling reference with HTTP 400. Only Gemini's
-    # self-contained thought *text* (no id, no signature) is dropped.
+def test_strip_prior_thinking_keeps_signed_reasoning_items() -> None:
+    # A signature is the provider's own handle on the reasoning, needed when the
+    # turn is re-sent: dropping a signed part invalidates the history (OpenAI
+    # rejects the dangling reference with HTTP 400). Those parts are also
+    # empty-content, so dropping them would save nothing anyway.
     openai_like: ModelResponse = ModelResponse(
         parts=[ThinkingPart(content="", id="rs_1", signature="sig"), TextPart("A1 A2")]
     )
@@ -718,31 +726,81 @@ def test_strip_prior_thinking_keeps_linked_reasoning_items() -> None:
         strip_prior_thinking([openai_like, anthropic_like, gemini_like])
     )
 
-    # The linked/signed reasoning items are kept intact…
+    # The signed reasoning items are kept intact…
     assert isinstance(out[0], ModelResponse)
     assert [type(p).__name__ for p in out[0].parts] == ["ThinkingPart", "TextPart"]
     assert isinstance(out[1], ModelResponse)
     assert [type(p).__name__ for p in out[1].parts] == ["ThinkingPart", "TextPart"]
-    # …while the self-contained thought text is the only reasoning dropped.
+    # …while the unsigned thought text is dropped.
     assert isinstance(out[2], ModelResponse)
     assert [type(p).__name__ for p in out[2].parts] == ["TextPart"]
 
 
-def test_resolve_agent_attaches_thinking_stripper(
+def test_strip_prior_thinking_drops_field_labelled_reasoning() -> None:
+    # An OpenAI-compatible chat endpoint (ollama, vLLM) returns reasoning as text
+    # tagged with the NAME OF THE FIELD it arrived in — id='reasoning' — which is a
+    # constant label, not a provider handle: nothing references it, and no signature
+    # accompanies it. These carry the bulk of a local model's re-sent context, so
+    # they must be stripped despite having an id.
+    local_like: ModelResponse = ModelResponse(
+        parts=[
+            ThinkingPart(content="a long chain of thought", id="reasoning",
+                         provider_name="openai"),
+            TextPart("A1 A2"),
+        ]
+    )
+    alt_field: ModelResponse = ModelResponse(
+        parts=[ThinkingPart(content="more thought", id="reasoning_content")]
+    )
+
+    out: list[object] = list(strip_prior_thinking([local_like, alt_field]))
+
+    assert isinstance(out[0], ModelResponse)
+    assert [type(p).__name__ for p in out[0].parts] == ["TextPart"]
+    assert isinstance(out[1], ModelResponse)
+    assert [type(p).__name__ for p in out[1].parts] == []
+
+
+def test_resolve_agent_does_not_prune_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Every resolved agent, on either output-mode branch, carries the history
-    # processor so a long match's context does not balloon with re-sent reasoning.
+    # Pruning is opt-in: by default the model sees whatever reasoning its provider
+    # natively carries back, so no provider is handed a different conversation from
+    # another in a benchmark that compares their reasoning.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     for provider in ("anthropic", "openai"):
         agent = resolve_agent(PlayerSpec(name="p", provider=provider, model="m"), {})
-        processors = [
-            c.processor
-            for c in agent.root_capability.capabilities
-            if isinstance(c, ProcessHistory)
-        ]
-        assert strip_prior_thinking in processors
+        assert not _history_processors(agent)
+
+
+def test_resolve_agent_attaches_stripper_when_pruning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With --prune-thinking, every resolved agent carries the history processor on
+    # either output-mode branch.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    for provider in ("anthropic", "openai"):
+        agent = resolve_agent(
+            PlayerSpec(name="p", provider=provider, model="m"), {}, prune_thinking=True
+        )
+        assert strip_prior_thinking in _history_processors(agent)
+
+
+def test_from_roster_prune_thinking_reaches_the_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    roster: Roster = Roster(
+        players={"opus": PlayerSpec(name="opus", provider="anthropic", model="m")},
+        providers={},
+    )
+    plain: LLMPlayer = LLMPlayer.from_roster("opus", roster)
+    pruning: LLMPlayer = LLMPlayer.from_roster("opus", roster, prune_thinking=True)
+
+    assert not _history_processors(plain._agent)
+    assert strip_prior_thinking in _history_processors(pruning._agent)
 
 
 def test_from_roster_builds_named_player(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -760,3 +818,33 @@ def test_from_roster_unknown_name_is_an_error() -> None:
     roster: Roster = Roster(players={}, providers={})
     with pytest.raises(ConfigError, match="no player named"):
         LLMPlayer.from_roster("ghost", roster)
+
+
+def test_warns_when_the_endpoint_ignores_the_thinking_level(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Pydantic AI silently drops the unified thinking setting for a model whose
+    # profile reports no support — which is most locally served models, since it
+    # cannot recognize the name. The request still succeeds and the model reasons at
+    # whatever its server defaults to, so the run is NOT failed; but §4 runs every
+    # player at one level for an even footing, and an ignored setting must not be
+    # indistinguishable from an applied one.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    providers: dict[str, ProviderSpec] = {
+        "local": ProviderSpec(name="local", base_url="http://localhost:8000/v1")
+    }
+    resolve_agent(
+        PlayerSpec(name="qwen-local", provider="local", model="qwen/qwen3.8"), providers
+    )
+
+    err: str = capsys.readouterr().err
+    assert "qwen-local" in err
+    assert "thinking level" in err
+
+
+def test_no_warning_when_the_provider_takes_the_thinking_level(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    resolve_agent(PlayerSpec(name="opus", provider="anthropic", model="claude-opus-4-8"), {})
+    assert capsys.readouterr().err == ""

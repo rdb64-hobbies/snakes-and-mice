@@ -557,6 +557,21 @@ class LLMMove(BaseModel):
   validated, never acted on, kept for observation and later analysis. It is placed
   first in the schema so the model articulates a reason before committing to a move.
 
+**How the object is requested is a per-provider choice.** Most providers use Pydantic
+AI's default output *tool*; **Anthropic** cannot combine an output tool with thinking,
+so its agent asks for the model's **native JSON-schema response format** instead. Both
+yield the same `LLMMove`, so nothing downstream varies; only the agent's construction
+does, which is why that knowledge sits with model resolution rather than in the player.
+
+**Responses are capped at a generous output-token budget** (16384, against Pydantic
+AI's 4096 default). On Anthropic that ceiling covers the thinking *and* the answer
+together, so at high effort the reasoning alone can approach a small cap and clip the
+trailing JSON — which then fails to parse and is scored as an `UNPARSEABLE_OUTPUT`
+fault rather than the model's play. Only tokens actually produced are billed, so a
+generous cap costs nothing on a short answer. It is not a free parameter, though: a
+model whose effort level makes it reason past the cap produces a
+`THINKING_LIMIT_EXCEEDED` fault instead (see "Thinking / effort level").
+
 ### The message thread
 
 No network call is made except when a move is actually needed: `start_game` and
@@ -592,32 +607,56 @@ the next user turn on the following `choose_move`.
 ### Pruning re-sent reasoning from the request
 
 Because the thread spans the whole match and every provider re-sends the **entire**
-thread as input on each turn, a reasoning model's own accumulated chain-of-thought
-would otherwise dominate the payload — and grow super-linearly over a match, since
-each turn's reasoning is re-sent on every later turn. Left unchecked this both
-inflates cost and caps how many games fit before the thread outgrows the model's
-input budget. Yet that prior reasoning is not needed to keep playing: the board is
-fully reconstructible from the move list, and the model reasons afresh — still at the
-full effort level (see "Thinking / effort level") — every turn.
+thread as input on each turn, a reasoning model's own accumulated chain-of-thought can
+dominate the payload — and grow super-linearly over a match, since each turn's
+reasoning is re-sent on every later turn. Left unchecked this both inflates cost and
+caps how many games fit before the thread outgrows the model's input budget. Yet that
+prior reasoning is not needed to keep playing: the board is fully reconstructible from
+the move list, and the model reasons afresh — still at the full effort level (see
+"Thinking / effort level") — every turn.
 
-So the player attaches a Pydantic AI **history processor** (the `ProcessHistory`
-capability) that strips bulky prior reasoning from what is **sent**, turn by turn,
-without lowering the thinking level. The rule is by **shape**, not by provider:
+So the player *can* attach a Pydantic AI **history processor** (the `ProcessHistory`
+capability) that strips prior reasoning from what is **sent**, turn by turn, without
+lowering the thinking level. The rule is by **shape**, not by provider — a part is
+stripped when it **has text** and **carries no signature**:
 
-- **Stripped:** self-contained reasoning *text* — thought content carried with no
-  provider `id` or `signature` (emitted by Gemini and by open-weight text-reasoning
-  models such as the gpt-oss / qwen / kimi families). Removing it leaves a valid
-  history, and it is where nearly all the savings are.
-- **Kept:** *linked* reasoning items — typically empty-content parts carrying an
-  `id`/`signature` that a later item references (OpenAI's Responses API, Anthropic).
-  Dropping them saves nothing (there is no text) and **invalidates** the re-sent
-  history — OpenAI rejects the dangling reference with an HTTP 400 — so they must
-  survive.
+- **Has text** is the whole payload worth dropping, and it excludes OpenAI's
+  Responses API and Anthropic outright: both emit *empty-content* reasoning parts, so
+  there is nothing to save by dropping them.
+- **No signature** keeps the history valid. A signature is the provider's own handle
+  on the reasoning, needed when the turn is re-sent; dropping a signed part
+  **invalidates** the re-sent history — OpenAI rejects the dangling reference with an
+  HTTP 400.
 
-The practical saving is largest for models whose entire re-sent reasoning is that
-self-contained text; for Gemini it is smaller, because its cross-turn reasoning also
-rides on a mandatory, opaque `thought_signature` attached to the tool-call part, which
-the wire must retain for multi-turn tool calling and so is never stripped.
+Deliberately **not** tested is the part's `id`. For an OpenAI-compatible chat endpoint
+(ollama, vLLM) Pydantic AI sets the id to the literal *name of the field* the reasoning
+arrived in — `reasoning` or `reasoning_content` — a constant label that nothing
+references, not a provider handle. An earlier rule that also required `id is None`
+therefore skipped every locally served model, which is exactly where the bulk sits.
+
+**Whether stripping saves anything is decided downstream, by each model build's chat
+template**, and the project cannot detect which case it is in:
+
+- A vLLM-served `qwen3.8` renders a re-sent `reasoning` field back into the prompt as
+  `<think>…</think>`, at ~2.9 characters per input token — real context growth of
+  2,500–3,600 tokens per turn. (It ignores `reasoning_content`; the field name is the
+  switch, and it differs per model.)
+- A vLLM-served `nemotron-3-super` ignores the same field entirely: the text is
+  uploaded on every request and never tokenized, contributing **zero** prompt tokens.
+
+So identical clients against identical servers can differ purely by model. The rule
+strips the text either way and lets the template decide whether that mattered.
+
+**Pruning is off by default, enabled per run by `--prune-thinking` (§7).** The reason
+is benchmark validity rather than economy. Anthropic, OpenAI and Gemini all hand a
+model its own prior reasoning back regardless of what is stripped, via a signature the
+provider reconstructs server-side — Gemini's `thought_signature` alone runs to ~1 input
+token per reasoning token, several times what stripping its thought summary saves. Only
+a model with no such channel actually loses sight of its earlier thinking. Pruning by
+default would therefore present a systematically different conversation to different
+providers, in a benchmark whose whole purpose is comparing reasoning across models. The
+default keeps whatever each provider natively carries; the flag exists for long
+tournament runs where context growth is the binding constraint.
 
 This is a **wire-only** transform: it rewrites only the request payload. The player's
 stored thread — and therefore the `--log-llm` dump (see "Message logging") — keeps the
@@ -751,6 +790,23 @@ footing, without the steep cost of the top (`xhigh`) tier. "Consistent" here mea
 providers. Per-player effort levels and provider-specific setting overrides are
 deliberately deferred.
 
+**The level is best-effort, and for many models it does not arrive.** Pydantic AI
+drops the unified setting **silently** for any model whose profile reports no support
+— which is every OpenAI-compatible endpoint whose model name it cannot recognize, so
+most locally served models. The request still succeeds; the model simply reasons at
+whatever its server defaults to, which need not be `high` and need not even offer it
+(one vLLM-served `qwen3.8` container accepts only `xhigh` / `medium` / `low`, defaults
+its chat template to `xhigh`, and returns HTTP 400 for `high`). An over-large default
+also interacts with `MAX_OUTPUT_TOKENS`: reasoning that runs to the cap yields a
+`THINKING_LIMIT_EXCEEDED` fault, which would then be scoring the harness rather than
+the model.
+
+The project does **not** fail or fall back in that case — the fix belongs on the
+server (e.g. vLLM's `--default-chat-template-kwargs`), and a hard failure would make
+perfectly usable models unusable. It **does** print one note per affected player at
+construction, so "running at `high`" and "running at the server's default" are
+distinguishable without probing the endpoint.
+
 ### Message logging (debugging)
 
 Because the benchmark turns on *how a model reasons*, it helps to be able to read
@@ -791,9 +847,8 @@ never affects how moves or faults are scored.
 To keep the first LLM player simple, and beyond the game-playing core above:
 usage / cost / latency tracking; per-player or per-provider setting overrides;
 persistence of the message thread across processes; and fully managing a thread that
-still outgrows the model's context window over a long match — re-sent reasoning is
-already pruned from requests (see "Pruning re-sent reasoning"), which slows that
-growth but does not by itself cap it.
+still outgrows the model's context window over a long match — `--prune-thinking` can
+slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it.
 
 ## 5. Matches
 
@@ -1009,8 +1064,9 @@ sets the opening for every game — `random` (the default) or a fixed cell like
 `B3` (§5); `--watch` selects the observation level (§5), defaulting to `game`
 (coarser than `play-match`, since a batch can be large). **Human players are rejected** — a batch
 runs unattended, with no one to see the board or type a move — so the "human
-forces `move`" rule (§5) never applies here. There is no `--log-llm`: a
-per-conversation dump across a large batch is not useful.
+forces `move`" rule (§5) never applies here. `--prune-thinking` (§4) is available and
+matters most here, a batch being where a thread grows longest. There is no
+`--log-llm`: a per-conversation dump across a large batch is not useful.
 
 ### Tallying results
 
@@ -1070,6 +1126,8 @@ for the match (§5); `--seed` sets where the snake is seeded each game — `rand
 level is forced to `move` (with a message), since a human must see the board.
 `--log-llm [DIR]` (off by default) dumps each LLM player's full raw message thread
 as JSON for debugging (§4, "Message logging"); a no-op for non-LLM players.
+`--prune-thinking` (off by default) strips earlier turns' reasoning text from each
+LLM request (§4, "Pruning re-sent reasoning"); also a no-op for non-LLM players.
 `--tournament-results [FILE]` (off by default) records the resulting `MatchResult`
 as a line in the results file (§6) — absent ⇒ nothing is written, bare ⇒ append to
 `tournament-results.jsonl`, with a path ⇒ append there. Because this command is
@@ -1081,8 +1139,9 @@ between two LLMs, reporting per game.
 **`play-tournament-matches`** — run **many** matches from two player subsets and
 append each result to the file (§6). Options: `--players` / `--against` (the subset
 selectors), `--games N`, `--seed` (opening for every game: `random` default or a
-fixed cell, §5), `--watch` (default `game`), and `--tournament-results
-[FILE]` (path override only — this command always appends). Human players are
+fixed cell, §5), `--watch` (default `game`), `--prune-thinking` (§4, off by default;
+most worthwhile here, since a batch is where context growth binds), and
+`--tournament-results [FILE]` (path override only — this command always appends). Human players are
 rejected. E.g. `play-tournament-matches` runs a full round-robin, and
 `play-tournament-matches --players new-model --against all` enters a new player
 against the whole roster.
