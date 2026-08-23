@@ -63,7 +63,7 @@ response while still reasoning."""
 
 
 # How to explain each fault back to the model, so the next game's opening can
-# tell it what it did wrong and how to avoid repeating it (§11, end_game).
+# tell it what it did wrong and how to avoid repeating it (§4, end_game).
 FAULT_ADVICE: dict[PlayerFaultReason, str] = {
     PlayerFaultReason.OFF_BOARD: (
         "you named a cell that is off the board — cells range from A1 to E5 "

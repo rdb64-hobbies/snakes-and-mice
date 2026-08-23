@@ -5,6 +5,12 @@ No network is used: a scripted model returns a fixed sequence of structured
 cross-game message thread (rules once, opponent moves relayed, feedback carried
 forward), and message logging deterministically. The player uses
 ``NativeOutput``, so a response is a plain JSON ``TextPart`` (no output tool).
+
+The last section covers the module's other half — resolving a roster entry to a
+model, an agent, and a player (``resolve_model`` / ``resolve_agent`` /
+``LLMPlayer.from_roster``) — which is also network-free: constructing a
+provider/model only stores the key and endpoint, so we can assert the resolved
+type and that a missing key or unknown provider is reported as a ``ConfigError``.
 """
 
 from __future__ import annotations
@@ -15,6 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, NativeOutput
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -26,7 +33,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.models.openrouter import OpenRouterModel
 
 from snakes_and_mice import (
     Cell,
@@ -41,8 +52,15 @@ from snakes_and_mice import (
     TurnOutcome,
     play_game,
 )
+from snakes_and_mice.config import ConfigError, PlayerSpec, ProviderSpec, Roster
 from snakes_and_mice.players import LLMPlayer
-from snakes_and_mice.players.llm import LLMMove, ModelRequestError
+from snakes_and_mice.players.llm import (
+    LLMMove,
+    ModelRequestError,
+    resolve_agent,
+    resolve_model,
+    strip_prior_thinking,
+)
 from snakes_and_mice.players.prompts import RULES_PREAMBLE
 
 # An arbitrary fixed seed cell for start_game calls that don't care where the
@@ -465,10 +483,6 @@ def test_prior_thinking_stripped_from_requests_but_kept_in_history() -> None:
     # processor (attached to every agent by resolve_agent) removes it from what the
     # model receives, while the stored thread — and so the --log-llm dump — keeps the
     # full thinking for debugging. This does not touch the current turn's thinking.
-    from pydantic_ai.capabilities import ProcessHistory
-
-    from snakes_and_mice.config import strip_prior_thinking
-
     saw_prior_thinking: list[bool] = []
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -598,3 +612,151 @@ def test_message_logging_writes_replayable_thread(tmp_path: Path) -> None:
         log_file.read_bytes()
     )
     assert len(messages) >= 2  # at least the user turn and the model response
+
+
+# --- Resolving a roster entry to a model, an agent, and a player ---------------
+
+
+def test_resolve_builtin_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+
+    anthropic = resolve_model(PlayerSpec(name="a", provider="anthropic", model="m"), {})
+    openai = resolve_model(PlayerSpec(name="o", provider="openai", model="m"), {})
+    gemini = resolve_model(PlayerSpec(name="g", provider="gemini", model="m"), {})
+    # OpenRouter requires an upstream-provider-prefixed model name.
+    router = resolve_model(
+        PlayerSpec(name="r", provider="openrouter", model="openai/gpt-4o"), {}
+    )
+
+    assert isinstance(anthropic, AnthropicModel)
+    assert isinstance(openai, OpenAIResponsesModel)  # Responses API, not Chat
+    assert isinstance(gemini, GoogleModel)
+    assert isinstance(router, OpenRouterModel)
+
+
+def test_resolve_custom_provider_uses_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    providers: dict[str, ProviderSpec] = {
+        "my-ollama": ProviderSpec(
+            name="my-ollama", base_url="http://localhost:11434/v1"
+        )
+    }
+    # A keyless local endpoint resolves without any API key in the environment.
+    model = resolve_model(
+        PlayerSpec(name="local", provider="my-ollama", model="llama3.3"), providers
+    )
+    assert isinstance(model, OpenAIChatModel)
+
+
+def test_resolve_missing_key_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(ConfigError, match="ANTHROPIC_API_KEY"):
+        resolve_model(PlayerSpec(name="a", provider="anthropic", model="m"), {})
+
+
+def test_resolve_unknown_provider_is_an_error() -> None:
+    with pytest.raises(ConfigError, match="unknown provider"):
+        resolve_model(PlayerSpec(name="x", provider="nope", model="m"), {})
+
+
+def test_resolve_agent_output_mode_by_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    # Anthropic cannot combine an output tool with thinking, so its agent must use
+    # the provider's native JSON-schema output; other providers keep Pydantic AI's
+    # default (auto/tool-based) output that they were validated against.
+    anthropic = resolve_agent(PlayerSpec(name="a", provider="anthropic", model="m"), {})
+    openai = resolve_agent(PlayerSpec(name="o", provider="openai", model="m"), {})
+
+    assert type(anthropic._output_schema).__name__ == "NativeOutputSchema"
+    assert type(openai._output_schema).__name__ != "NativeOutputSchema"
+
+
+def test_strip_prior_thinking_removes_thinking_keeps_the_rest() -> None:
+    # The history processor drops reasoning parts from prior responses — which
+    # dominate a long match's re-sent context — while leaving the move text and the
+    # user turns untouched, and without mutating the input it was given.
+    request: ModelRequest = ModelRequest(parts=[UserPromptPart(content="your turn")])
+    response: ModelResponse = ModelResponse(
+        parts=[ThinkingPart(content="deep"), TextPart(content="A1 A2")]
+    )
+
+    out: list[object] = list(strip_prior_thinking([request, response]))
+
+    # The thinking part is gone from the response, the move text stays…
+    assert isinstance(out[1], ModelResponse)
+    assert [type(p).__name__ for p in out[1].parts] == ["TextPart"]
+    # …the user turn is passed through unchanged, and the original is not mutated.
+    assert out[0] is request
+    assert [type(p).__name__ for p in response.parts] == ["ThinkingPart", "TextPart"]
+
+
+def test_strip_prior_thinking_keeps_linked_reasoning_items() -> None:
+    # OpenAI's Responses API and Anthropic emit empty-content reasoning parts that
+    # carry an id/signature a following item references. These must survive the
+    # stripper: removing them saves nothing (no text) and invalidates the re-sent
+    # history — OpenAI rejects the dangling reference with HTTP 400. Only Gemini's
+    # self-contained thought *text* (no id, no signature) is dropped.
+    openai_like: ModelResponse = ModelResponse(
+        parts=[ThinkingPart(content="", id="rs_1", signature="sig"), TextPart("A1 A2")]
+    )
+    anthropic_like: ModelResponse = ModelResponse(
+        parts=[ThinkingPart(content="", signature="sig"), TextPart("B1 B2")]
+    )
+    gemini_like: ModelResponse = ModelResponse(
+        parts=[ThinkingPart(content="long summary"), TextPart("C1 C2")]
+    )
+
+    out: list[object] = list(
+        strip_prior_thinking([openai_like, anthropic_like, gemini_like])
+    )
+
+    # The linked/signed reasoning items are kept intact…
+    assert isinstance(out[0], ModelResponse)
+    assert [type(p).__name__ for p in out[0].parts] == ["ThinkingPart", "TextPart"]
+    assert isinstance(out[1], ModelResponse)
+    assert [type(p).__name__ for p in out[1].parts] == ["ThinkingPart", "TextPart"]
+    # …while the self-contained thought text is the only reasoning dropped.
+    assert isinstance(out[2], ModelResponse)
+    assert [type(p).__name__ for p in out[2].parts] == ["TextPart"]
+
+
+def test_resolve_agent_attaches_thinking_stripper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every resolved agent, on either output-mode branch, carries the history
+    # processor so a long match's context does not balloon with re-sent reasoning.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    for provider in ("anthropic", "openai"):
+        agent = resolve_agent(PlayerSpec(name="p", provider=provider, model="m"), {})
+        processors = [
+            c.processor
+            for c in agent.root_capability.capabilities
+            if isinstance(c, ProcessHistory)
+        ]
+        assert strip_prior_thinking in processors
+
+
+def test_from_roster_builds_named_player(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    roster: Roster = Roster(
+        players={"opus": PlayerSpec(name="opus", provider="anthropic", model="m")},
+        providers={},
+    )
+    player: LLMPlayer = LLMPlayer.from_roster("opus", roster)
+    assert isinstance(player, LLMPlayer)
+    assert player.name == "opus"
+
+
+def test_from_roster_unknown_name_is_an_error() -> None:
+    roster: Roster = Roster(players={}, providers={})
+    with pytest.raises(ConfigError, match="no player named"):
+        LLMPlayer.from_roster("ghost", roster)

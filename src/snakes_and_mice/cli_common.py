@@ -15,12 +15,12 @@ import logging
 import random
 from pathlib import Path
 
-from .config import Roster, make_llm_player
+from .config import Roster
 from .console import ConsoleObserver, SECOND_PERSON
 from .core import Cell, Side
 from .faults import IllegalMove
 from .observer import ObservationLevel, Observer
-from .players import HumanPlayer, PerfectPlayer, Player, RandomPlayer
+from .players import HumanPlayer, LLMPlayer, PerfectPlayer, Player, RandomPlayer
 
 SEED_DEFAULT: str = "random"
 
@@ -66,7 +66,7 @@ def make_player(
     if kind == "perfect":
         return PerfectPlayer(name=PERFECT_NAME[side])
     assert roster is not None  # a roster is loaded whenever an LLM name is used
-    return make_llm_player(kind, roster, log_dir=log_dir)
+    return LLMPlayer.from_roster(kind, roster, log_dir=log_dir)
 
 
 def add_watch_argument(parser: argparse.ArgumentParser, *, default: str) -> None:

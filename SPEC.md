@@ -726,9 +726,14 @@ secrets. The repository instead ships tracked templates — `players.example.yam
 `providers.example.yaml`, and `.env.example` — that document the format and are
 copied and edited into the real (git-ignored) files.
 
-A **config loader** reads these three sources and produces resolved, typed model
-specifications, from which `LLMPlayer` instances are constructed. The player itself
-never touches YAML.
+A **config loader** reads these three sources and produces typed, validated
+specifications — a roster of named player and provider entries — and stops there. It
+knows about *files*, not about models: resolving a `(provider, model)` spec to a
+Pydantic AI model and agent, and building a player from it, is the LLM player's own
+job, offered as the alternate constructor `LLMPlayer.from_roster(name, roster)`. So
+the split is clean in both directions — the config loader never imports Pydantic AI,
+the player never touches YAML — and **every** Pydantic AI dependency in the project
+sits in the LLM player module.
 
 ### Thinking / effort level
 
@@ -1110,7 +1115,10 @@ Rough module layout (subject to change once we start coding):
 - `players` — the player interface and its implementations (scripted, random,
   human, and — per §4 — the LLM player). Loading the LLM roster from
   `players.yaml` / `providers.yaml` / `.env` lives in a small config module
-  alongside it, keeping YAML parsing out of the player itself.
+  alongside it, which parses those files into typed specs and does no more:
+  model/agent resolution — and with it every Pydantic AI import — stays in the
+  LLM player module. YAML parsing is thus kept out of the player, and provider
+  knowledge out of the config.
 - `console` — the shared presentation layer: board rendering, result summaries,
   and the stdout `Observer`.
 - **CLI frontends** — one thin module per command (§7), sharing player

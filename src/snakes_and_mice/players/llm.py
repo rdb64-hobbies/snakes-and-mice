@@ -1,6 +1,6 @@
 """The LLM player: chooses moves by querying a large language model.
 
-This is the player type the project exists to compare (§11). It wraps a single
+This is the player type the project exists to compare (§4). It wraps a single
 Pydantic AI :class:`~pydantic_ai.Agent` bound to one model and keeps **one
 message thread that spans every game it plays**, so the model accumulates
 context across games — including how earlier games ended — and can learn from a
@@ -13,32 +13,58 @@ actually needed — :meth:`start_game`, :meth:`observe_move`, and :meth:`end_gam
 only *enqueue* messages, which are flushed as the next user turn on the following
 :meth:`choose_move`. There are no retries within a game: an illegal or unusable
 move ends the game, and the consequence is delivered as feedback in the *next*
-game's opening (§11, "No retries").
+game's opening (§4, "No retries").
+
+All Pydantic AI knowledge lives here, and nowhere else in the project: the
+``(provider, model)`` → model mapping (:func:`resolve_model`), the agent's output
+mode, effort level, and history processing (:func:`resolve_agent`,
+:func:`strip_prior_thinking`), and the alternate constructor that turns a roster
+entry into a ready player (:meth:`LLMPlayer.from_roster`). The
+:mod:`~snakes_and_mice.config` module supplies only the parsed
+:class:`~snakes_and_mice.config.Roster`; it neither imports ``pydantic_ai`` nor
+knows what a model is.
 """
 
 from __future__ import annotations
 
+import os
 import time
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     ModelMessagesTypeAdapter,
+    NativeOutput,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.google import GoogleProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+from pydantic_ai.settings import ModelSettings
 
+from ..config import ConfigError, PlayerSpec, ProviderSpec, Roster
 from ..core import Cell, Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
     IllegalMove,
@@ -50,6 +76,38 @@ from ..faults import (
 from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
 from .prompts import FAULT_ADVICE, RULES_PREAMBLE
+
+# Built-in providers Pydantic AI supports directly, each with the environment
+# variable that holds its key (§4, "Model selection"). Custom OpenAI-compatible
+# providers are declared in providers.yaml instead and are not listed here.
+_BUILTIN_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+}
+
+ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
+"""Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
+
+DEFAULT_THINKING: ThinkingLevel = "high"
+"""The global default reasoning effort every LLM player uses (§4). ``high``
+rather than ``xhigh`` keeps strong reasoning without the steep cost of the top
+tier."""
+
+MAX_OUTPUT_TOKENS: int = 16384
+"""Upper bound on tokens per response. Pydantic AI's default cap is 4096, and on
+Anthropic that ceiling covers the thinking *and* the answer together — at high
+effort the reasoning alone can approach it and clip the trailing JSON, which then
+fails to parse and faults as UNPARSEABLE_OUTPUT. A generous cap leaves room for
+both; only tokens actually produced are billed, so raising it costs nothing on a
+short answer."""
+
+# Providers whose structured output must use the model's native JSON-schema
+# response format instead of an output tool. Anthropic forbids combining an
+# output tool with thinking, so it needs native output; the others were validated
+# with Pydantic AI's default tool-based output and keep it.
+_NATIVE_OUTPUT_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
 # Some failures of a provider call are operational — neither the model's play nor
 # a configuration error: a dropped connection or timeout, a rate-limit or server
@@ -93,7 +151,7 @@ class ModelRequestError(SnakesAndMiceError):
 
 
 class LLMMove(BaseModel):
-    """The structured object the model returns for each move request (§11).
+    """The structured object the model returns for each move request (§4).
 
     ``move_rationale`` is placed first so the model articulates a reason before
     committing to a move; it is log-only and never validated. ``claimed_outcome``
@@ -108,6 +166,163 @@ class LLMMove(BaseModel):
     # describes these fields to the model; keep the two in sync.
 
 
+def resolve_model(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> Model:
+    """Resolve one :class:`PlayerSpec` to a Pydantic AI model.
+
+    Built-in providers read their key from the environment; a custom provider is
+    looked up in ``providers`` and reached at its configured base URL. Raises
+    :class:`ConfigError` for an unknown provider or a missing key.
+    """
+    provider: str = spec.provider
+    if provider == "anthropic":
+        return AnthropicModel(
+            spec.model, provider=AnthropicProvider(api_key=_require_key(provider))
+        )
+    if provider == "openai":
+        # The Responses API (not Chat Completions) is what supports OpenAI's
+        # reasoning effort together with the function/output tool our structured
+        # output relies on.
+        return OpenAIResponsesModel(
+            spec.model, provider=OpenAIProvider(api_key=_require_key(provider))
+        )
+    if provider == "gemini":
+        return GoogleModel(
+            spec.model, provider=GoogleProvider(api_key=_require_key(provider))
+        )
+    if provider == "openrouter":
+        return OpenRouterModel(
+            spec.model, provider=OpenRouterProvider(api_key=_require_key(provider))
+        )
+
+    custom: ProviderSpec | None = providers.get(provider)
+    if custom is None:
+        known: list[str] = sorted(_BUILTIN_KEY_ENV) + sorted(providers)
+        raise ConfigError(
+            f"player {spec.name!r} names unknown provider {provider!r}; "
+            f"known providers: {', '.join(known)}"
+        )
+    # A local endpoint (e.g. ollama) may accept no key; the OpenAI client still
+    # wants a non-empty string, so pass a harmless placeholder when none is set.
+    api_key: str = (
+        _require_key_env(custom.api_key_env)
+        if custom.api_key_env is not None
+        else "unused"
+    )
+    return OpenAIChatModel(
+        spec.model, provider=OpenAIProvider(base_url=custom.base_url, api_key=api_key)
+    )
+
+
+def _require_key(provider: str) -> str:
+    """The API key for a built-in ``provider``, or a :class:`ConfigError`."""
+    return _require_key_env(_BUILTIN_KEY_ENV[provider])
+
+
+def _require_key_env(env_var: str) -> str:
+    """The value of ``env_var``, or a :class:`ConfigError` naming it. The keys
+    themselves never appear in the config files — :func:`..config.load_environment`
+    puts them in the environment, and they are read from there here."""
+    value: str | None = os.environ.get(env_var)
+    if not value:
+        raise ConfigError(
+            f"environment variable {env_var} is not set — add it to your .env or "
+            f"export it before running"
+        )
+    return value
+
+
+def _is_bulk_reasoning(part: ThinkingPart) -> bool:
+    """Whether ``part`` is verbatim reasoning text safe to drop from a re-sent
+    history — as opposed to a linked reasoning *item* that must be kept.
+
+    The distinction is by shape, not provider, and the logs bear out three cases:
+
+    * Gemini emits its thought summary as plain text (hundreds–thousands of chars)
+      with no ``id`` or ``signature``. This is the payload worth stripping: it is
+      self-contained, so removing it leaves a valid history.
+    * OpenAI's Responses API and Anthropic emit an *empty-content* part carrying an
+      ``id`` and/or ``signature`` that a following item references. Stripping it
+      saves nothing (there is no text) and breaks the re-sent history — OpenAI
+      rejects the dangling reference with HTTP 400 — so it must be kept.
+
+    So strip only a part that has text *and* no provider id/signature."""
+    return bool(part.content) and part.id is None and part.signature is None
+
+
+def strip_prior_thinking(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Drop bulky reasoning text from earlier turns before each model request.
+
+    A single LLM player keeps one message thread spanning the whole match (§4), and
+    every provider re-sends that entire thread as input on each turn. A reasoning
+    model's own past chain-of-thought can dominate that payload — for Gemini, which
+    returns its full thought summary as text, it is the bulk of the accumulated input
+    tokens, growing super-linearly over a match and capping how many games fit — yet
+    it is not needed to keep playing: the board is fully reconstructible from the move
+    list, and the model reasons afresh (still at full effort) every turn. Stripping
+    that prior reasoning from what is *sent* cuts the context back to near-flat growth
+    without lowering the thinking level.
+
+    Only self-contained reasoning *text* is stripped (see :func:`_is_bulk_reasoning`);
+    linked reasoning items (OpenAI/Anthropic, carrying an id/signature) are left in
+    place — they cost nothing to keep and removing them would invalidate the history.
+
+    This is attached as a :class:`ProcessHistory` capability, so it rewrites only the
+    request payload; the player's stored thread — and thus the ``--log-llm`` dump —
+    keeps the full thinking for debugging.
+    """
+    stripped: list[ModelMessage] = []
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            kept = [
+                p
+                for p in message.parts
+                if not (isinstance(p, ThinkingPart) and _is_bulk_reasoning(p))
+            ]
+            if len(kept) != len(message.parts):
+                message = replace(message, parts=kept)
+        stripped.append(message)
+    return stripped
+
+
+def resolve_agent(
+    spec: PlayerSpec,
+    providers: dict[str, ProviderSpec],
+    *,
+    thinking: ThinkingLevel = DEFAULT_THINKING,
+) -> Agent[None, LLMMove]:
+    """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
+
+    Provider knowledge lives here, not in the player's own methods: the model is
+    resolved and then wrapped in an agent whose output mode fits the provider —
+    native JSON-schema output where an output tool cannot coexist with thinking
+    (Anthropic), the default tool-based output everywhere else — so the player
+    itself only drives the message thread and reads back an :class:`LLMMove`.
+    ``retries=0`` (both branches) enforces §4's "no re-prompting within a game".
+    Every agent carries the :func:`strip_prior_thinking` history processor to keep
+    a long match's context from ballooning with re-sent past reasoning.
+    """
+    model: Model = resolve_model(spec, providers)
+    settings: ModelSettings = ModelSettings(
+        thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS
+    )
+    capabilities: list[ProcessHistory[None]] = [ProcessHistory(strip_prior_thinking)]
+    if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
+        return Agent(
+            model=model,
+            output_type=NativeOutput(LLMMove),
+            model_settings=settings,
+            retries=0,
+            capabilities=capabilities,
+        )
+    return Agent(
+        model=model,
+        output_type=LLMMove,
+        model_settings=settings,
+        retries=0,
+        capabilities=capabilities,
+    )
+
+
 class LLMPlayer(Player):
     """A player that queries one LLM over a single cross-game message thread."""
 
@@ -119,9 +334,9 @@ class LLMPlayer(Player):
         log_dir: Path | None = None,
     ) -> None:
         super().__init__(name)
-        # The agent is built and configured by the config layer, which alone knows
-        # the provider and so can pick the right output mode and settings for it
-        # (e.g. NativeOutput for Anthropic). The player stays provider-agnostic: it
+        # The agent arrives ready-made — from from_roster (via resolve_agent, which
+        # picks the output mode and settings the provider needs) or, in tests, from
+        # a FunctionModel. Once constructed, an instance is provider-agnostic: it
         # only drives the message thread and reads back an LLMMove.
         self._agent: Agent[None, LLMMove] = agent
         self._log_dir: Path | None = log_dir
@@ -132,9 +347,37 @@ class LLMPlayer(Player):
         self._pending: list[str] = [RULES_PREAMBLE]
         self._side: Side | None = None
 
+    @classmethod
+    def from_roster(
+        cls,
+        name: str,
+        roster: Roster,
+        *,
+        thinking: ThinkingLevel = DEFAULT_THINKING,
+        log_dir: Path | None = None,
+    ) -> LLMPlayer:
+        """Build the player for roster entry ``name`` — the usual constructor.
+
+        The roster comes from :mod:`~snakes_and_mice.config` as parsed specs; this
+        is where one is resolved to a live model and agent (:func:`resolve_agent`),
+        so the config layer never touches Pydantic AI. Raises :class:`ConfigError`
+        if no such player is in the roster, if its provider is unknown, or if the
+        provider's API key is not in the environment.
+        """
+        spec: PlayerSpec | None = roster.players.get(name)
+        if spec is None:
+            raise ConfigError(
+                f"no player named {name!r} in the roster; "
+                f"available: {', '.join(sorted(roster.players)) or '(none)'}"
+            )
+        agent: Agent[None, LLMMove] = resolve_agent(
+            spec, roster.providers, thinking=thinking
+        )
+        return cls(agent, name=spec.name, log_dir=log_dir)
+
     def start_game(self, side: Side, seed: Cell) -> None:
         # Any feedback from a game we just faulted was enqueued by end_game and is
-        # already ahead of this message in the pending queue (§11). The seed cell
+        # already ahead of this message in the pending queue (§4). The seed cell
         # is announced here, per game, since it can vary (the preamble describes
         # the rule but names no cell — see RULES_PREAMBLE).
         self._side = side
@@ -242,7 +485,7 @@ class LLMPlayer(Player):
 
         We must NOT recover the new turn by slicing ``captured`` at
         ``len(self._history)``. ``capture_run_messages`` reports the *wire* history,
-        which pydantic-ai builds by running :func:`~config.strip_prior_thinking` and
+        which pydantic-ai builds by running :func:`strip_prior_thinking` and
         then dropping the now-empty reasoning-only responses it leaves behind — so
         ``captured`` can be strictly *shorter* than our unstripped thread, making a
         length-based slice select nothing and silently lose the turn (a mid-match
@@ -266,7 +509,7 @@ class LLMPlayer(Player):
 
         An unparseable-output fault can take the shape of a ``final_result`` tool-call
         whose arguments failed validation (e.g. a mistyped field name). Because the
-        player runs with no retries (§11), pydantic-ai raises *before* emitting the
+        player runs with no retries (§4), pydantic-ai raises *before* emitting the
         tool-return that would normally close that call, so the response we persist
         ends in a tool-call with no matching return. Left unclosed, re-sending the
         thread makes the provider reject the whole request ("cannot provide a new user
@@ -294,12 +537,12 @@ class LLMPlayer(Player):
 
     def end_game(self, result: GameResult) -> None:
         # Composed now, sent only if there is a next game: it stays queued and is
-        # flushed on the next game's first choose_move (§11).
+        # flushed on the next game's first choose_move (§4).
         self._pending.append(self._describe_end(result))
 
     def _parse_move(self, cells: list[str]) -> Move:
         """Turn the model's ``cells`` into a :class:`Move`, mapping any structural
-        problem to the matching :class:`MoveUnavailable` fault (§11)."""
+        problem to the matching :class:`MoveUnavailable` fault (§4)."""
         try:
             return Move.from_labels(*cells)
         except IllegalMove as exc:
@@ -438,7 +681,7 @@ class LLMPlayer(Player):
         )
 
     def _write_log(self) -> None:
-        """Overwrite this player's log file with the full thread so far (§11).
+        """Overwrite this player's log file with the full thread so far (§4).
 
         Rewritten after every model call so an interrupted run still leaves the
         whole conversation up to the point of failure. A no-op when logging is off.
