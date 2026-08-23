@@ -241,9 +241,9 @@ def _warn_if_thinking_unsupported(spec: PlayerSpec, model: Model) -> None:
     """
     if not model.profile.get("supports_thinking", False):
         print(
-            f"note: player {spec.name!r} — {spec.provider} does not accept a "
+            f"Note: player {spec.name!r} — {spec.provider} does not accept a "
             f"thinking level for model {spec.model!r}; its effort is whatever the "
-            f"server defaults to",
+            f"server defaults to.",
             file=sys.stderr,
         )
 
