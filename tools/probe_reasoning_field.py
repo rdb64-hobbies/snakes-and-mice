@@ -108,6 +108,26 @@ def _resolve_provider(name: str | None) -> str:
     return spec.base_url.rstrip("/").removesuffix("/v1")
 
 
+def _exit_on_error(response: httpx.Response, what: str) -> None:
+    """Stop with the server's own message when a probe request is refused.
+
+    The body is the whole diagnosis and a bare status code is not: a qwen3.8
+    container rejecting the reasoning effort its own serve line asked for says so
+    here, and nowhere else. A refusal is also a real finding rather than a probe
+    failure — this endpoint cannot serve a move either.
+    """
+    if not response.is_error:
+        return
+    detail: str = response.text.strip()
+    try:
+        detail = str(response.json()["error"]["message"])
+    except (ValueError, KeyError, TypeError):
+        pass
+    raise SystemExit(
+        f"{what} refused the probe request (HTTP {response.status_code}): {detail}"
+    )
+
+
 def _live_prompt_tokens(
     client: httpx.Client, root: str, model: str, field: str | None
 ) -> int:
@@ -124,7 +144,7 @@ def _live_prompt_tokens(
         "max_tokens": 1,
     }
     response: httpx.Response = client.post(f"{root}/v1/chat/completions", json=body)
-    response.raise_for_status()
+    _exit_on_error(response, "the live request path")
     return int(response.json()["usage"]["prompt_tokens"])
 
 
@@ -149,7 +169,7 @@ def _template_prompt(
     response: httpx.Response = client.post(f"{root}/tokenize", json=body)
     if response.status_code == 404:
         return None
-    response.raise_for_status()
+    _exit_on_error(response, "/tokenize")
     payload: dict[str, Any] = response.json()
     strs: list[str] | None = payload.get("token_strs")
     rendered: str = "".join(strs).replace("Ġ", " ") if strs else ""

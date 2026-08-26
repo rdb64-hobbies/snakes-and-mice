@@ -663,15 +663,18 @@ therefore skipped every locally served model, which is exactly where the bulk si
 **Whether stripping saves anything is decided downstream, by each model build's chat
 template**, and the project cannot detect which case it is in:
 
-- A vLLM-served `qwen3.8` renders a re-sent `reasoning` field back into the prompt as
+- A vLLM-served `qwen3.8` renders re-sent reasoning back into the prompt as
   `<think>…</think>`, at ~2.9 characters per input token — real context growth of
-  2,500–3,600 tokens per turn. (It ignores `reasoning_content`; the field name is the
-  switch, and it differs per model.)
+  2,500–3,600 tokens per turn. It reads **either** field name: chat completions
+  normalize the two before templating. Only the Jinja template reached through
+  `/tokenize` is picky, rendering `reasoning` and dropping `reasoning_content` — an
+  earlier measurement took that path and recorded the template's asymmetry as the
+  model's.
 - A vLLM-served `nemotron-3-super` ignores the same field entirely: the text is
   uploaded on every request and never tokenized, contributing **zero** prompt tokens.
-- A vLLM-served `gpt-oss-120b` renders it at ~2.9 characters per input token and reads
-  **either** field name, growing a real match's request by ~2,600 tokens per turn —
-  enough that a 10-game match approaches its 131,072 context limit.
+- A vLLM-served `gpt-oss-120b` renders it at ~2.9 characters per input token, also
+  reading either field name, and grows a real match's request by ~2,600 tokens per
+  turn — enough that a 10-game match approaches its 131,072 context limit.
 
 So identical clients against identical servers can differ purely by model. The rule
 strips the text either way and lets the template decide whether that mattered.
