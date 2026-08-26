@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from dotenv import load_dotenv
@@ -43,13 +44,22 @@ class PlayerSpec(BaseModel):
     model: str
 
 
+OutputMode = Literal["tool", "native"]
+"""How an endpoint is asked for the structured move (§4, "Structured output"):
+``tool`` is Pydantic AI's default output tool, ``native`` the model's own
+JSON-schema response format."""
+
+
 class ProviderSpec(BaseModel):
-    """One custom OpenAI-compatible endpoint: a name, a base URL, and optionally
-    the environment variable holding its key (a local endpoint may need none)."""
+    """One custom OpenAI-compatible endpoint: a name, a base URL, optionally the
+    environment variable holding its key (a local endpoint may need none), and how
+    it is asked for structured output.
+    """
 
     name: str
     base_url: str
     api_key_env: str | None = None
+    output_mode: OutputMode = "tool"
 
 
 class _PlayersFile(BaseModel):

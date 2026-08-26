@@ -60,6 +60,7 @@ from snakes_and_mice.players.llm import (
     resolve_agent,
     resolve_model,
     strip_prior_thinking,
+    uses_native_output,
 )
 from snakes_and_mice.players.prompts import RULES_PREAMBLE
 
@@ -686,6 +687,49 @@ def test_resolve_agent_output_mode_by_provider(
 
     assert type(anthropic._output_schema).__name__ == "NativeOutputSchema"
     assert type(openai._output_schema).__name__ != "NativeOutputSchema"
+
+
+def test_resolve_agent_output_mode_by_custom_provider() -> None:
+    # A custom endpoint declares its own need: output_mode: native is what a server
+    # with no tool-call parser for its model requires, since a borrowed parser
+    # constrains generation to a syntax the model never emits (§4). The default
+    # stays tool-based, so existing endpoints are unaffected.
+    providers: dict[str, ProviderSpec] = {
+        "tool-endpoint": ProviderSpec(name="tool-endpoint", base_url="http://h/v1"),
+        "native-endpoint": ProviderSpec(
+            name="native-endpoint", base_url="http://h/v1", output_mode="native"
+        ),
+    }
+    default = resolve_agent(
+        PlayerSpec(name="d", provider="tool-endpoint", model="m"), providers
+    )
+    native = resolve_agent(
+        PlayerSpec(name="n", provider="native-endpoint", model="m"), providers
+    )
+
+    assert type(default._output_schema).__name__ != "NativeOutputSchema"
+    assert type(native._output_schema).__name__ == "NativeOutputSchema"
+
+
+def test_uses_native_output_covers_both_reasons() -> None:
+    # The two reasons are independent: a built-in provider that cannot combine an
+    # output tool with thinking, and a custom endpoint that says so in its config.
+    providers: dict[str, ProviderSpec] = {
+        "local": ProviderSpec(
+            name="local", base_url="http://h/v1", output_mode="native"
+        ),
+        "plain": ProviderSpec(name="plain", base_url="http://h/v1"),
+    }
+    assert uses_native_output(PlayerSpec(name="a", provider="anthropic", model="m"), {})
+    assert uses_native_output(
+        PlayerSpec(name="b", provider="local", model="m"), providers
+    )
+    assert not uses_native_output(
+        PlayerSpec(name="c", provider="plain", model="m"), providers
+    )
+    assert not uses_native_output(
+        PlayerSpec(name="d", provider="openai", model="m"), providers
+    )
 
 
 def test_strip_prior_thinking_removes_thinking_keeps_the_rest() -> None:

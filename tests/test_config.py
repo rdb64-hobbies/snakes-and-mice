@@ -87,3 +87,45 @@ def test_load_environment_reads_env_file(
 
     assert os.environ["SAM_TEST_ENV_KEY"] == "hello"
     monkeypatch.delenv("SAM_TEST_ENV_KEY", raising=False)
+
+
+def test_provider_output_mode_defaults_to_tool_and_parses_native(
+    tmp_path: Path,
+) -> None:
+    # output_mode is optional, so every existing providers.yaml keeps the tool-based
+    # output it was validated against; "native" is opt-in per endpoint (§4).
+    providers_path: Path = tmp_path / "providers.yaml"
+    providers_path.write_text(
+        "providers:\n"
+        "  - name: plain\n"
+        "    base_url: http://h/v1\n"
+        "  - name: declared\n"
+        "    base_url: http://h/v1\n"
+        "    output_mode: native\n"
+    )
+    players_path: Path = tmp_path / "players.yaml"
+    players_path.write_text(
+        "players:\n  - name: p\n    provider: plain\n    model: m\n"
+    )
+
+    roster: Roster = load_roster(players_path, providers_path)
+
+    assert roster.providers["plain"].output_mode == "tool"
+    assert roster.providers["declared"].output_mode == "native"
+
+
+def test_unknown_output_mode_is_an_error(tmp_path: Path) -> None:
+    providers_path: Path = tmp_path / "providers.yaml"
+    providers_path.write_text(
+        "providers:\n"
+        "  - name: bad\n"
+        "    base_url: http://h/v1\n"
+        "    output_mode: grammar\n"
+    )
+    players_path: Path = tmp_path / "players.yaml"
+    players_path.write_text(
+        "players:\n  - name: p\n    provider: bad\n    model: m\n"
+    )
+
+    with pytest.raises(ConfigError, match="output_mode"):
+        load_roster(players_path, providers_path)

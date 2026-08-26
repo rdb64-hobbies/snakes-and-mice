@@ -563,6 +563,32 @@ so its agent asks for the model's **native JSON-schema response format** instead
 yield the same `LLMMove`, so nothing downstream varies; only the agent's construction
 does, which is why that knowledge sits with model resolution rather than in the player.
 
+A **custom endpoint declares the same need itself**, with `output_mode: native` in
+`providers.yaml` (see "Model selection"), because for a self-hosted server the choice
+is a property of the deployment rather than of the provider kind. The case that forces
+it: vLLM implements a tool-call format **per model family**, so a served model outside
+that set must borrow another family's `--tool-call-parser` — and since the
+structural-tag refactor (absent in vLLM 0.17, present by 0.24) that parser no longer
+merely *scrapes* the finished text but **compiles the decoding grammar**. A model held
+to a foreign tool-call syntax never reaches a state where stopping is allowed: it
+writes one correct call, is denied its end token, and repeats until `max_tokens`.
+Measured on a vLLM-served `NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`, which vLLM has a
+reasoning parser for but no tool parser, every turn returned `finish_reason: length`
+carrying ~190 byte-identical calls — while `qwen3.8` and `gpt-oss-120b`, each served
+with its own family's parser, were unaffected on the same container. Native output
+sidesteps the tool parser entirely: the grammar is compiled from the schema, and with
+a reasoning parser configured the server holds it back until the thinking ends.
+[`tools/probe_tool_termination.py`](tools/probe_tool_termination.py) asks one endpoint
+for a move both ways and reports how each ended, which is how the mode is chosen.
+
+Measured on that same model and container, native output settles it: over a 10-game
+match every response terminated on its own (41 `stop`, plus one genuine
+`THINKING_LIMIT_EXCEEDED`), no response carried a tool call, and the thread grew
+598 → 4,828 input tokens across 42 turns rather than 1,078 → 231,865. Reasoning is
+untouched — mean output 4,679 tokens against 4,338–4,634 for the same model on the
+old container — so the mode changes how the move is *requested*, not how hard the
+model thinks, and the benchmark stays comparable across it.
+
 **Responses are capped at a generous output-token budget** (16384, against Pydantic
 AI's 4096 default). On Anthropic that ceiling covers the thinking *and* the answer
 together, so at high effort the reasoning alone can approach a small cap and clip the
@@ -738,7 +764,8 @@ Three sources of configuration, parsed **outside** the player (§8, Architecture
 - **`providers.yaml`** — **only** for custom OpenAI-compatible endpoints; built-in
   providers are never listed. Each entry maps a provider name to a base URL and,
   optionally, the environment variable holding its key (a local ollama may need
-  none):
+  none) and how the endpoint is asked for structured output (`output_mode`, default
+  `tool`; see "Structured output"):
 
   ```yaml
   providers:
@@ -748,7 +775,15 @@ Three sources of configuration, parsed **outside** the player (§8, Architecture
     - name: my-vllm
       base_url: http://gpu-box:8000/v1
       api_key_env: VLLM_API_KEY
+    - name: my-vllm-native
+      base_url: http://gpu-box:8000/v1     # the same server, asked the other way
+      api_key_env: VLLM_API_KEY
+      output_mode: native
   ```
+
+  Two entries may share a `base_url` and differ only in `output_mode`, which is how
+  the two modes are compared against one endpoint — the roster names them as
+  separate providers, so a match can be run each way.
 
 - **`.env`** — API keys, kept out of the YAML and out of version control, read from
   the environment:
@@ -1663,7 +1698,12 @@ progress toward that, not incidental churn.
     those giving a fallible opponent the most ways to go wrong, cutting the games it
     fails to win against the random player from 37.7% to 2.0% — while still never
     putting the draw at risk, since every candidate ranked is equally optimal.
-    *(current)*
+  - **1.5** — structured output made portable across self-hosted endpoints (§4,
+    "Structured output"): a custom provider declares `output_mode: native` when
+    its server has no tool-call parser for the model it serves, and
+    `tools/probe_tool_termination.py` measures which mode an endpoint can
+    actually finish a move in. This unpins a model from the one old container
+    that happened to work. *(current)*
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic

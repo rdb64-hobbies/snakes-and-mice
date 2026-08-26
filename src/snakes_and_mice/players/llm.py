@@ -46,6 +46,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -85,13 +86,13 @@ MAX_OUTPUT_TOKENS: int = 16384
 """Cap on tokens per response, well above Pydantic AI's 4096 default (§4,
 "Structured output")."""
 
-# Providers whose structured output must use the model's native JSON-schema
-# response format rather than an output tool (§4, "Structured output").
+# Built-in providers needing native JSON-schema output; a custom endpoint says so
+# itself, with output_mode: native. See uses_native_output.
 _NATIVE_OUTPUT_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
-# A transient transport failure is retried before the game is voided as a
-# no-contest (§4, "No retries"). Providers surface the same condition in different
-# exception shapes, so choose_move classifies by behavior, not by exception type.
+# Attempts per move before the game is voided as a no-contest (§4, "No retries").
+# Providers surface the same condition in different exception shapes, so
+# choose_move classifies by behavior, not by exception type.
 _MAX_ATTEMPTS: int = 3
 # Seconds to wait before each retry; one entry per gap, so length is
 # _MAX_ATTEMPTS - 1.
@@ -121,10 +122,8 @@ class ModelRequestError(SnakesAndMiceError):
 class LLMMove(BaseModel):
     """The structured object the model returns for each move request (§4).
 
-    ``move_rationale`` is placed first so the model articulates a reason before
-    committing to a move; it is log-only and never validated. ``claimed_outcome``
-    is required: the model must assess, every turn, whether its move wins, draws,
-    or leaves the game in play — a wrong claim is a ``WRONG_OUTCOME_CLAIM`` fault.
+    Field order is part of the schema: ``move_rationale`` first, so the model
+    states a reason before committing to cells.
     """
 
     move_rationale: str  # a SHORT justification; logged, never validated
@@ -202,9 +201,8 @@ def _require_key_env(env_var: str) -> str:
 def _is_bulk_reasoning(part: ThinkingPart) -> bool:
     """Whether ``part`` is reasoning text safe to drop from a re-sent history.
 
-    Two clauses (§4, "Pruning re-sent reasoning"): it must have text — which alone
-    excludes OpenAI's and Anthropic's empty-content parts — and carry no signature,
-    which the provider needs back when the turn is re-sent.
+    It must have text, and carry no signature — dropping a signed part invalidates
+    the re-sent history (§4, "Pruning re-sent reasoning").
 
     ``part.id`` is deliberately not tested: on an OpenAI-compatible endpoint it is
     the name of the field the reasoning arrived in, not a provider handle.
@@ -248,6 +246,20 @@ def _warn_if_thinking_unsupported(spec: PlayerSpec, model: Model) -> None:
         )
 
 
+def uses_native_output(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> bool:
+    """Whether this player asks for the move as the model's native JSON-schema
+    response format rather than through an output tool (§4, "Structured output").
+
+    Two independent reasons: a built-in provider listed in
+    :data:`_NATIVE_OUTPUT_PROVIDERS`, or a custom endpoint that declares
+    ``output_mode: native`` in ``providers.yaml``.
+    """
+    if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
+        return True
+    custom: ProviderSpec | None = providers.get(spec.provider)
+    return custom is not None and custom.output_mode == "native"
+
+
 def resolve_agent(
     spec: PlayerSpec,
     providers: dict[str, ProviderSpec],
@@ -257,11 +269,10 @@ def resolve_agent(
 ) -> Agent[None, LLMMove]:
     """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
 
-    The model is wrapped in an agent whose output mode fits the provider — native
-    JSON-schema output for :data:`_NATIVE_OUTPUT_PROVIDERS`, the default tool-based
-    output elsewhere (§4, "Structured output").
-    ``retries=0`` (both branches) enforces §4's "no re-prompting within a game", and
-    ``prune_thinking`` attaches the :func:`strip_prior_thinking` history processor.
+    The model is wrapped in an agent whose output mode fits the provider — see
+    :func:`uses_native_output` (§4, "Structured output"). ``retries=0`` enforces
+    §4's "no re-prompting within a game", and ``prune_thinking`` attaches the
+    :func:`strip_prior_thinking` history processor.
     """
     model: Model = resolve_model(spec, providers)
     _warn_if_thinking_unsupported(spec, model)
@@ -271,17 +282,12 @@ def resolve_agent(
     capabilities: list[ProcessHistory[None]] = (
         [ProcessHistory(strip_prior_thinking)] if prune_thinking else []
     )
-    if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
-        return Agent(
-            model=model,
-            output_type=NativeOutput(LLMMove),
-            model_settings=settings,
-            retries=0,
-            capabilities=capabilities,
-        )
+    output: OutputSpec[LLMMove] = (
+        NativeOutput(LLMMove) if uses_native_output(spec, providers) else LLMMove
+    )
     return Agent(
         model=model,
-        output_type=LLMMove,
+        output_type=output,
         model_settings=settings,
         retries=0,
         capabilities=capabilities,
@@ -299,10 +305,9 @@ class LLMPlayer(Player):
         log_dir: Path | None = None,
     ) -> None:
         super().__init__(name)
-        # The agent arrives ready-made — from from_roster (via resolve_agent, which
-        # picks the output mode and settings the provider needs) or, in tests, from
-        # a FunctionModel. Once constructed, an instance is provider-agnostic: it
-        # only drives the message thread and reads back an LLMMove.
+        # The agent arrives ready-made — from from_roster, or a FunctionModel in
+        # tests — so this class stays provider-agnostic: it drives the thread and
+        # reads back an LLMMove, nothing more.
         self._agent: Agent[None, LLMMove] = agent
         self._log_dir: Path | None = log_dir
         # The running conversation (spans every game) and the messages queued for
@@ -565,9 +570,8 @@ class LLMPlayer(Player):
                 "(a draw)."
             )
         if result.termination is Termination.ABORTED:
-            # A no-contest: a technical problem, not the model's play, voided the
-            # game. Say so plainly and give no fault advice — there is nothing for
-            # the model to do differently.
+            # A no-contest: no fault advice, since nothing about the model's play
+            # caused it.
             return (
                 "That game was abandoned because of a technical problem reaching "
                 "you, not anything about your play — it does not count."
