@@ -669,9 +669,20 @@ template**, and the project cannot detect which case it is in:
   switch, and it differs per model.)
 - A vLLM-served `nemotron-3-super` ignores the same field entirely: the text is
   uploaded on every request and never tokenized, contributing **zero** prompt tokens.
+- A vLLM-served `gpt-oss-120b` renders it at ~2.9 characters per input token and reads
+  **either** field name, growing a real match's request by ~2,600 tokens per turn —
+  enough that a 10-game match approaches its 131,072 context limit.
 
 So identical clients against identical servers can differ purely by model. The rule
 strips the text either way and lets the template decide whether that mattered.
+
+The measurement must go through the **live** request path, not `/tokenize`: a server
+can render one conversation two ways — vLLM applies the Jinja chat template at
+`/tokenize` but encodes `gpt-oss` through harmony for chat completions — and for that
+model the two disagree outright, `/tokenize` reporting the reasoning dropped where the
+real requests pay for every token of it. `probe_reasoning_field.py` measures with a
+one-token completion and reports any such disagreement, since a false "dropped" argues
+against pruning exactly where pruning pays most.
 
 **Pruning is off by default, enabled per run by `--prune-thinking` (§7).** The reason
 is benchmark validity rather than economy. Anthropic, OpenAI and Gemini all hand a

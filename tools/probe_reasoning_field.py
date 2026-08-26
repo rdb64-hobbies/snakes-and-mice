@@ -14,14 +14,22 @@ length. A difference is the template rendering that field; zero difference means
 reasoning costs no context and nothing against `max_model_len`, so `--prune-thinking`
 would buy nothing there.
 
-Two endpoints measured this way differed purely by model: a vLLM-served `qwen3.8`
-renders `reasoning` at ~2.9 chars per input token (and ignores `reasoning_content`),
-while `nemotron-3-super` ignores both. Re-run it whenever a model or container
-changes — the answer is a property of the deployment, not of this project.
+Endpoints measured this way differ purely by model: a vLLM-served `qwen3.8` renders
+`reasoning` at ~2.9 chars per input token (and ignores `reasoning_content`) and
+`gpt-oss-120b` at ~2.9 (reading either field), while `nemotron-3-super` ignores both. Re-run it whenever a
+model or container changes — the answer is a property of the deployment, not of this
+project.
 
-vLLM's `/tokenize` does the work with no generation, so the model need only be loaded.
-Endpoints without it (ollama) fall back to a one-token completion, comparing the
-`prompt_tokens` the server reports; that measures the same quantity.
+Measured with a one-token completion per variant, comparing the `prompt_tokens` the
+server reports: one forward pass, and the number the live requests would pay. It has
+to be the live path, because a server can render the same conversation two ways —
+vLLM's `/tokenize` applies the Jinja chat template while chat completions encode
+gpt-oss through harmony, and for `gpt-oss-120b` the two disagree outright:
+`/tokenize` shows the reasoning dropped, while the real requests pay ~2.9 chars per
+token of it. `/tokenize` is still queried where available, for the rendered prompt
+text it returns — that is where the qwen container's "Reasoning effort is set to
+xhigh" default was found — but it is advisory, and any disagreement with the live
+count is reported.
 
     uv run python tools/probe_reasoning_field.py PROVIDER
 
@@ -100,12 +108,39 @@ def _resolve_provider(name: str | None) -> str:
     return spec.base_url.rstrip("/").removesuffix("/v1")
 
 
-def _prompt_tokens(
+def _live_prompt_tokens(
     client: httpx.Client, root: str, model: str, field: str | None
-) -> tuple[int, str]:
-    """The prompt length for one variant, and the rendered prompt when the server
-    will report it. Prefers ``/tokenize`` (no generation); falls back to a one-token
-    completion, whose ``prompt_tokens`` measures the same thing."""
+) -> int:
+    """The prompt length for one variant, as the *live* request path renders it.
+
+    A one-token completion: the generation is a single forward pass, and the
+    ``prompt_tokens`` the server reports is what the real requests would pay. This
+    is the authoritative measurement, because it goes through the same encoder the
+    LLM player's own calls do.
+    """
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": _conversation(field),
+        "max_tokens": 1,
+    }
+    response: httpx.Response = client.post(f"{root}/v1/chat/completions", json=body)
+    response.raise_for_status()
+    return int(response.json()["usage"]["prompt_tokens"])
+
+
+def _template_prompt(
+    client: httpx.Client, root: str, model: str, field: str | None
+) -> tuple[int, str] | None:
+    """``/tokenize``'s view of the same conversation, or ``None`` where the endpoint
+    has no such route (ollama).
+
+    Worth having for the rendered prompt text, which can be read directly rather
+    than inferred from a count. But it is *advisory only*: ``/tokenize`` applies the
+    Jinja chat template, while chat completions may use a different encoder —
+    vLLM renders gpt-oss through harmony — so the two can disagree, and where they
+    do it is the live path that decides. :func:`main` checks for that disagreement
+    rather than trusting either silently.
+    """
     body: dict[str, Any] = {
         "model": model,
         "messages": _conversation(field),
@@ -113,14 +148,9 @@ def _prompt_tokens(
     }
     response: httpx.Response = client.post(f"{root}/tokenize", json=body)
     if response.status_code == 404:
-        body = {"model": model, "messages": _conversation(field), "max_tokens": 1}
-        response = client.post(f"{root}/v1/chat/completions", json=body)
-        response.raise_for_status()
-        return int(response.json()["usage"]["prompt_tokens"]), ""
+        return None
     response.raise_for_status()
     payload: dict[str, Any] = response.json()
-    # The token strings joined back together are the prompt the template produced,
-    # so the reasoning can be looked for directly rather than inferred from a count.
     strs: list[str] | None = payload.get("token_strs")
     rendered: str = "".join(strs).replace("Ġ", " ") if strs else ""
     return int(payload["count"]), rendered
@@ -154,11 +184,10 @@ def main() -> None:
         print(f"payload  {len(REASONING):,} chars of reasoning\n")
 
         counts: dict[str, int] = {}
-        rendered: dict[str, str] = {}
+        template: dict[str, tuple[int, str] | None] = {}
         for label, field in _VARIANTS:
-            counts[label], rendered[label] = _prompt_tokens(
-                client, root, model, field
-            )
+            counts[label] = _live_prompt_tokens(client, root, model, field)
+            template[label] = _template_prompt(client, root, model, field)
             print(f"  {label:20s} prompt = {counts[label]:6,d} tokens")
 
         print()
@@ -172,16 +201,44 @@ def main() -> None:
             )
             print(f"  {label:20s} Δ = {delta:+6,d}   {verdict}")
 
-        if any(rendered.values()):
+        # /tokenize renders through the Jinja template; chat completions may not
+        # (vLLM encodes gpt-oss with harmony). Where the two disagree the numbers
+        # above still stand — they are the live path — but the rendered prompt
+        # below is then a different template's output and must not be read as
+        # evidence about what the model receives.
+        seen_template: dict[str, str] = {
+            label: entry[1] for label, entry in template.items() if entry is not None
+        }
+        disagreed: list[str] = [
+            label
+            for label, entry in template.items()
+            if entry is not None and entry[0] != counts[label]
+        ]
+        if disagreed:
+            where: str = (
+                "every variant"
+                if len(disagreed) == len(_VARIANTS)
+                else ", ".join(disagreed)
+            )
+            print(
+                f"\n  NOTE: /tokenize disagrees with the live path for {where}."
+                f"\n        It renders the Jinja chat template, which is not what"
+                f"\n        chat completions use here. The verdict above is the live"
+                f"\n        path; the rendered prompt below is the other template's."
+            )
+
+        if any(seen_template.values()):
             print()
             for label, _ in _VARIANTS:
-                seen: bool = _NEEDLE in rendered[label]
+                text: str | None = seen_template.get(label)
+                if text is None:
+                    continue
                 print(
                     f"  {label:20s} reasoning text in rendered prompt: "
-                    f"{'YES' if seen else 'no'}"
+                    f"{'YES' if _NEEDLE in text else 'no'}"
                 )
-            if rendered["reasoning"]:
-                head: str = rendered["reasoning"].replace("Ċ", "\n")[:400]
+            if seen_template.get("reasoning"):
+                head: str = seen_template["reasoning"].replace("Ċ", "\n")[:400]
                 print(f"\n  rendered prompt, first 400 chars:\n{head}")
 
 
