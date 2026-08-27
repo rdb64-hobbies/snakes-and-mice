@@ -28,7 +28,7 @@ from .cli_common import (
     parse_seed,
     quiet_http_logging,
 )
-from .config import ConfigError, Roster, load_environment, load_roster
+from .roster import ConfigError, Roster, load_environment, load_roster
 from .core import Cell, Side
 from .faults import TournamentError
 from .match import play_match

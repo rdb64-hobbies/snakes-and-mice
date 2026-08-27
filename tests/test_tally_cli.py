@@ -20,7 +20,7 @@ from snakes_and_mice import (
     Side,
     Termination,
 )
-from snakes_and_mice.config import PlayerSpec, Roster
+from snakes_and_mice.roster import PlayerSpec, Roster
 from snakes_and_mice.serialize import append_match_result
 from snakes_and_mice.tally_cli import main
 

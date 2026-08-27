@@ -15,7 +15,7 @@ import logging
 import random
 from pathlib import Path
 
-from .config import Roster
+from .roster import Roster
 from .console import ConsoleObserver, SECOND_PERSON
 from .core import Cell, Side
 from .faults import IllegalMove

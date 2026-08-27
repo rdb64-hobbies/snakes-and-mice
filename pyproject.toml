@@ -1,6 +1,6 @@
 [project]
 name = "snakes-and-mice"
-version = "1.5.0"
+version = "1.6.0"
 description = "Snakes and Mice — a game engine and pluggable players, used as an LLM reasoning benchmark"
 readme = "README.md"
 license = "MIT"

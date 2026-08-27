@@ -9,7 +9,7 @@ This module also holds the ``(provider, model)`` → agent resolution
 (:func:`resolve_model`, :func:`resolve_agent`) and the constructor that builds a
 player from a roster entry (:meth:`LLMPlayer.from_roster`), so it is the only
 module in the project that imports ``pydantic_ai``;
-:mod:`~snakes_and_mice.config` supplies just the parsed roster.
+:mod:`~snakes_and_mice.roster` supplies just the parsed roster.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from pydantic_ai import (
     Agent,
     ModelMessagesTypeAdapter,
     NativeOutput,
+    PromptedOutput,
     UnexpectedModelBehavior,
     capture_run_messages,
 )
@@ -53,7 +54,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.settings import ModelSettings
 
-from ..config import ConfigError, PlayerSpec, ProviderSpec, Roster
+from ..roster import ConfigError, OutputMode, PlayerSpec, ProviderSpec, Roster
 from ..core import Cell, Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
     IllegalMove,
@@ -187,7 +188,7 @@ def _require_key(provider: str) -> str:
 
 def _require_key_env(env_var: str) -> str:
     """The value of ``env_var``, or a :class:`ConfigError` naming it. The keys
-    themselves never appear in the config files — :func:`..config.load_environment`
+    themselves never appear in the config files — :func:`..roster.load_environment`
     puts them in the environment, and they are read from there here."""
     value: str | None = os.environ.get(env_var)
     if not value:
@@ -246,18 +247,27 @@ def _warn_if_thinking_unsupported(spec: PlayerSpec, model: Model) -> None:
         )
 
 
-def uses_native_output(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> bool:
-    """Whether this player asks for the move as the model's native JSON-schema
-    response format rather than through an output tool (§4, "Structured output").
+def output_mode_for(spec: PlayerSpec, providers: dict[str, ProviderSpec]) -> OutputMode:
+    """How this player asks for the move (§4, "Structured output").
 
-    Two independent reasons: a built-in provider listed in
-    :data:`_NATIVE_OUTPUT_PROVIDERS`, or a custom endpoint that declares
-    ``output_mode: native`` in ``providers.yaml``.
+    A built-in provider listed in :data:`_NATIVE_OUTPUT_PROVIDERS` needs
+    ``native``; any other built-in takes the default ``tool``. A custom endpoint
+    declares its own mode in ``providers.yaml``.
     """
     if spec.provider in _NATIVE_OUTPUT_PROVIDERS:
-        return True
+        return "native"
     custom: ProviderSpec | None = providers.get(spec.provider)
-    return custom is not None and custom.output_mode == "native"
+    return custom.output_mode if custom is not None else "tool"
+
+
+def _output_spec(mode: OutputMode) -> OutputSpec[LLMMove]:
+    """The Pydantic AI output marker for one mode. ``tool`` is the bare type, which
+    is Pydantic AI's default (an output tool)."""
+    if mode == "native":
+        return NativeOutput(LLMMove)
+    if mode == "prompted":
+        return PromptedOutput(LLMMove)
+    return LLMMove
 
 
 def resolve_agent(
@@ -270,7 +280,7 @@ def resolve_agent(
     """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
 
     The model is wrapped in an agent whose output mode fits the provider — see
-    :func:`uses_native_output` (§4, "Structured output"). ``retries=0`` enforces
+    :func:`output_mode_for` (§4, "Structured output"). ``retries=0`` enforces
     §4's "no re-prompting within a game", and ``prune_thinking`` attaches the
     :func:`strip_prior_thinking` history processor.
     """
@@ -282,9 +292,7 @@ def resolve_agent(
     capabilities: list[ProcessHistory[None]] = (
         [ProcessHistory(strip_prior_thinking)] if prune_thinking else []
     )
-    output: OutputSpec[LLMMove] = (
-        NativeOutput(LLMMove) if uses_native_output(spec, providers) else LLMMove
-    )
+    output: OutputSpec[LLMMove] = _output_spec(output_mode_for(spec, providers))
     return Agent(
         model=model,
         output_type=output,
@@ -329,9 +337,9 @@ class LLMPlayer(Player):
     ) -> LLMPlayer:
         """Build the player for roster entry ``name`` — the usual constructor.
 
-        The roster comes from :mod:`~snakes_and_mice.config` as parsed specs; this
+        The roster comes from :mod:`~snakes_and_mice.roster` as parsed specs; this
         is where one is resolved to a live model and agent (:func:`resolve_agent`),
-        so the config layer never touches Pydantic AI. Raises :class:`ConfigError`
+        so the roster loader never touches Pydantic AI. Raises :class:`ConfigError`
         if no such player is in the roster, if its provider is unknown, or if the
         provider's API key is not in the environment.
         """

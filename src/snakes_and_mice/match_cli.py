@@ -26,7 +26,7 @@ from .cli_common import (
     quiet_http_logging,
 )
 from .core import Cell
-from .config import ConfigError, Roster, load_environment, load_roster
+from .roster import ConfigError, Roster, load_environment, load_roster
 from .core import Side
 from .match import play_match
 from .players import ModelRequestError, Player

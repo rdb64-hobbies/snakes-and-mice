@@ -1,4 +1,4 @@
-"""Tests for the roster/provider config loader.
+"""Tests for the roster loader.
 
 These exercise the configuration *files* and nothing else: parsing
 ``players.yaml`` / ``providers.yaml`` into a :class:`Roster`, tolerating a
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from snakes_and_mice.config import (
+from snakes_and_mice.roster import (
     ConfigError,
     Roster,
     load_environment,

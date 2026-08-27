@@ -52,15 +52,15 @@ from snakes_and_mice import (
     TurnOutcome,
     play_game,
 )
-from snakes_and_mice.config import ConfigError, PlayerSpec, ProviderSpec, Roster
+from snakes_and_mice.roster import ConfigError, PlayerSpec, ProviderSpec, Roster
 from snakes_and_mice.players import LLMPlayer
 from snakes_and_mice.players.llm import (
     LLMMove,
     ModelRequestError,
+    output_mode_for,
     resolve_agent,
     resolve_model,
     strip_prior_thinking,
-    uses_native_output,
 )
 from snakes_and_mice.players.prompts import RULES_PREAMBLE
 
@@ -82,7 +82,7 @@ def _scripted(
     """An agent whose model returns ``moves`` in order, optionally recording the
     user prompt (the flushed messages) it was handed on each call.
 
-    The player no longer builds its own agent — the config layer does, choosing
+    The player no longer builds its own agent — the roster loader does, choosing
     the output mode per provider — so tests inject one here. It mirrors the
     Anthropic path (``NativeOutput``): the scripted model returns each move as
     JSON in a text response rather than an output-tool call.
@@ -690,45 +690,49 @@ def test_resolve_agent_output_mode_by_provider(
 
 
 def test_resolve_agent_output_mode_by_custom_provider() -> None:
-    # A custom endpoint declares its own need: output_mode: native is what a server
-    # with no tool-call parser for its model requires, since a borrowed parser
-    # constrains generation to a syntax the model never emits (§4). The default
-    # stays tool-based, so existing endpoints are unaffected.
+    # Each declared mode reaches the agent as a different output schema. The three
+    # differ in how much they constrain generation (§4): a tool, a JSON-schema
+    # response format, or nothing but the prompt.
     providers: dict[str, ProviderSpec] = {
-        "tool-endpoint": ProviderSpec(name="tool-endpoint", base_url="http://h/v1"),
-        "native-endpoint": ProviderSpec(
-            name="native-endpoint", base_url="http://h/v1", output_mode="native"
-        ),
+        mode: ProviderSpec(name=mode, base_url="http://h/v1", output_mode=mode)
+        for mode in ("tool", "native", "prompted")
     }
-    default = resolve_agent(
-        PlayerSpec(name="d", provider="tool-endpoint", model="m"), providers
-    )
-    native = resolve_agent(
-        PlayerSpec(name="n", provider="native-endpoint", model="m"), providers
-    )
+    schemas: dict[str, str] = {
+        mode: type(
+            resolve_agent(
+                PlayerSpec(name=mode, provider=mode, model="m"), providers
+            )._output_schema
+        ).__name__
+        for mode in providers
+    }
 
-    assert type(default._output_schema).__name__ != "NativeOutputSchema"
-    assert type(native._output_schema).__name__ == "NativeOutputSchema"
+    assert schemas["native"] == "NativeOutputSchema"
+    assert schemas["prompted"] == "PromptedOutputSchema"
+    assert len(set(schemas.values())) == 3, schemas
 
 
-def test_uses_native_output_covers_both_reasons() -> None:
-    # The two reasons are independent: a built-in provider that cannot combine an
-    # output tool with thinking, and a custom endpoint that says so in its config.
+def test_output_mode_for_covers_every_provider_kind() -> None:
+    # Anthropic cannot combine an output tool with thinking, so it is native
+    # whatever the config says; other built-ins take the default; a custom endpoint
+    # declares its own, and an unknown provider falls back to the default rather
+    # than raising (resolve_model reports the unknown provider).
     providers: dict[str, ProviderSpec] = {
-        "local": ProviderSpec(
-            name="local", base_url="http://h/v1", output_mode="native"
+        "declared": ProviderSpec(
+            name="declared", base_url="http://h/v1", output_mode="prompted"
         ),
         "plain": ProviderSpec(name="plain", base_url="http://h/v1"),
     }
-    assert uses_native_output(PlayerSpec(name="a", provider="anthropic", model="m"), {})
-    assert uses_native_output(
-        PlayerSpec(name="b", provider="local", model="m"), providers
+    assert output_mode_for(PlayerSpec(name="a", provider="anthropic", model="m"), {}) == (
+        "native"
     )
-    assert not uses_native_output(
-        PlayerSpec(name="c", provider="plain", model="m"), providers
+    assert output_mode_for(PlayerSpec(name="b", provider="openai", model="m"), {}) == "tool"
+    assert (
+        output_mode_for(PlayerSpec(name="c", provider="declared", model="m"), providers)
+        == "prompted"
     )
-    assert not uses_native_output(
-        PlayerSpec(name="d", provider="openai", model="m"), providers
+    assert (
+        output_mode_for(PlayerSpec(name="d", provider="plain", model="m"), providers)
+        == "tool"
     )
 
 

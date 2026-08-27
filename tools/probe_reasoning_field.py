@@ -44,7 +44,7 @@ from typing import Any, Final
 
 import httpx
 
-from snakes_and_mice.config import ProviderSpec, load_roster
+from snakes_and_mice.roster import ProviderSpec, load_roster
 
 # Long enough that any tokenization stands far above the noise of the surrounding
 # messages, and distinctive enough to find verbatim in a rendered prompt.

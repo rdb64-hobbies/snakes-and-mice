@@ -563,10 +563,12 @@ so its agent asks for the model's **native JSON-schema response format** instead
 yield the same `LLMMove`, so nothing downstream varies; only the agent's construction
 does, which is why that knowledge sits with model resolution rather than in the player.
 
-A **custom endpoint declares the same need itself**, with `output_mode: native` in
-`providers.yaml` (see "Model selection"), because for a self-hosted server the choice
-is a property of the deployment rather than of the provider kind. The case that forces
-it: vLLM implements a tool-call format **per model family**, so a served model outside
+A **custom endpoint declares its own mode** in `providers.yaml` (see "Model
+selection"), because for a self-hosted server the choice is a property of the
+deployment rather than of the provider kind. Three are offered, in decreasing order of
+how much they constrain generation: `tool` (the default), `native`, and `prompted` —
+the last putting the schema in the prompt and parsing the reply as text, so nothing
+constrains the model at all. The case that forces a move off `tool`: vLLM implements a tool-call format **per model family**, so a served model outside
 that set must borrow another family's `--tool-call-parser` — and since the
 structural-tag refactor (absent in vLLM 0.17, present by 0.24) that parser no longer
 merely *scrapes* the finished text but **compiles the decoding grammar**. A model held
@@ -581,13 +583,43 @@ a reasoning parser configured the server holds it back until the thinking ends.
 [`tools/probe_tool_termination.py`](tools/probe_tool_termination.py) asks one endpoint
 for a move both ways and reports how each ended, which is how the mode is chosen.
 
-Measured on that same model and container, native output settles it: over a 10-game
-match every response terminated on its own (41 `stop`, plus one genuine
+Measured on that same model and container, native output settles termination: over a
+10-game match every response terminated on its own (41 `stop`, plus one genuine
 `THINKING_LIMIT_EXCEEDED`), no response carried a tool call, and the thread grew
-598 → 4,828 input tokens across 42 turns rather than 1,078 → 231,865. Reasoning is
-untouched — mean output 4,679 tokens against 4,338–4,634 for the same model on the
-old container — so the mode changes how the move is *requested*, not how hard the
-model thinks, and the benchmark stays comparable across it.
+598 → 4,828 input tokens across 42 turns rather than 1,078 → 231,865.
+
+**Whether the mode is neutral for play is unsettled**, and worth stating carefully
+because the question looks answerable and is not. Measured against the perfect player
+from the Mouse seat, on the same model:
+
+| container / mode | games | draws | faults | reasoning |
+| --- | --- | --- | --- | --- |
+| 0.17.1, tool (a post-hoc parser, no grammar) | 36 (4×10) | 78% | 11% | 15,275 |
+| 0.17.1, native | 39 (1×40) | 49% | 31% | 9,351 |
+| 0.17.1, prompted | 39 (1×40) | 49% | 33% | 8,417 |
+| 0.27.1, native | 18 (2×10) | 50% | 22% | — |
+| 0.27.1, tool | — | never terminates | — | — |
+
+The obvious reading — that constraining generation costs play quality — does not
+survive. `prompted` constrains nothing at all (no tool, no `response_format`, the
+schema in the prompt) and lands within one game of `native`. Two other things
+confound the gap that remains. **Match length**: both 40-game runs decline from 60%
+draws over their first ten games to 49% overall, so a long match hurts on its own,
+which is why matches are kept short. And restricted to matched 10-game structure the
+mode difference is 78% vs 55% on draws (p=0.05) and 11% vs 26% on faults (p=0.14) —
+suggestive, not established.
+
+What is consistent is that both non-tool modes reason ~40% less on the same container.
+Board tracking is what the reasoning is for, and `CELL_NOT_EMPTY` is the dominant
+fault in every non-tool run, so there is a plausible chain there — but no mechanism
+for why asking for the output differently changes how much a model thinks.
+
+Two practical consequences. `native` is the default choice for a self-hosted endpoint,
+since it and `prompted` play alike and only `native`'s grammar guarantees parseable
+output. And because unconstrained tool mode exists only on a vLLM generation the
+project has left behind, results measured under it are historical: a mode change is a
+possible benchmark change, so a series that crosses one should say so rather than
+pool.
 
 **Responses are capped at a generous output-token budget** (16384, against Pydantic
 AI's 4096 default). On Anthropic that ceiling covers the thinking *and* the answer
@@ -814,12 +846,12 @@ secrets. The repository instead ships tracked templates — `players.example.yam
 `providers.example.yaml`, and `.env.example` — that document the format and are
 copied and edited into the real (git-ignored) files.
 
-A **config loader** reads these three sources and produces typed, validated
+A **roster loader** (`roster`) reads these three sources and produces typed, validated
 specifications — a roster of named player and provider entries — and stops there. It
 knows about *files*, not about models: resolving a `(provider, model)` spec to a
 Pydantic AI model and agent, and building a player from it, is the LLM player's own
 job, offered as the alternate constructor `LLMPlayer.from_roster(name, roster)`. So
-the split is clean in both directions — the config loader never imports Pydantic AI,
+the split is clean in both directions — the roster loader never imports Pydantic AI,
 the player never touches YAML — and **every** Pydantic AI dependency in the project
 sits in the LLM player module.
 
@@ -1222,11 +1254,11 @@ Rough module layout (subject to change once we start coding):
   Together with `match` and `game` these form the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
   human, and — per §4 — the LLM player). Loading the LLM roster from
-  `players.yaml` / `providers.yaml` / `.env` lives in a small config module
+  `players.yaml` / `providers.yaml` / `.env` lives in the small `roster` module
   alongside it, which parses those files into typed specs and does no more:
   model/agent resolution — and with it every Pydantic AI import — stays in the
   LLM player module. YAML parsing is thus kept out of the player, and provider
-  knowledge out of the config.
+  knowledge out of the roster loader.
 - `console` — the shared presentation layer: board rendering, result summaries,
   and the stdout `Observer`.
 - **CLI frontends** — one thin module per command (§7), sharing player
@@ -1717,7 +1749,13 @@ progress toward that, not incidental churn.
     its server has no tool-call parser for the model it serves, and
     `tools/probe_tool_termination.py` measures which mode an endpoint can
     actually finish a move in. This unpins a model from the one old container
-    that happened to work. *(current)*
+    that happened to work.
+  - **1.6** — `output_mode: prompted`, the third and least constrained way to ask
+    for the move (§4, "Structured output"): the schema goes in the prompt and the
+    reply is parsed as text, so no grammar touches generation. Built to test whether
+    constrained decoding was costing play quality against the perfect player. It is
+    not: prompted and native draw alike. The mode stays, as the answer to a question
+    that will otherwise be asked again. *(current)*
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic

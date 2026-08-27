@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from snakes_and_mice.config import PlayerSpec, Roster
+from snakes_and_mice.roster import PlayerSpec, Roster
 from snakes_and_mice.core import Side
 from snakes_and_mice.matches_cli import _parse_selector, main
 from snakes_and_mice.players import Player, RandomPlayer

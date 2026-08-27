@@ -7,13 +7,17 @@
 #   base_url:    the endpoint's OpenAI-compatible base URL
 #   api_key_env: (optional) the environment variable holding its key; omit for a
 #                local endpoint that needs no key
-#   output_mode: (optional) how the endpoint is asked for the structured move —
-#                "tool" (the default) uses an output tool; "native" uses the
-#                model's own JSON-schema response format. Use "native" when the
-#                server has no tool-call parser for the model it serves: a parser
-#                borrowed from another model family constrains generation to a
-#                format the model never emits, and it then never stops. Diagnose
-#                with tools/probe_tool_termination.py.
+#   output_mode: (optional) how the endpoint is asked for the structured move,
+#                in decreasing order of how much it constrains generation:
+#                  tool     (the default) an output tool
+#                  native   the model's own JSON-schema response format
+#                  prompted the schema in the prompt, reply parsed as text
+#                Use "native" when the server has no tool-call parser for the
+#                model it serves: a parser borrowed from another model family
+#                constrains generation to a format the model never emits, and it
+#                then never stops. Diagnose with tools/probe_tool_termination.py.
+#                "prompted" constrains nothing, which can matter for play quality
+#                — see SPEC §4, "Structured output".
 providers:
   - name: my-ollama
     base_url: http://localhost:11434/v1

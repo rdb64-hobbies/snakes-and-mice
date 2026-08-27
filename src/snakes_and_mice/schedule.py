@@ -5,7 +5,7 @@ A **tournament** is simply *any set of matches* (§6). This module turns two pla
 ``(mouse, snake)`` name pairs to play, via a single "straddle" rule that expresses
 round-robins, subset play, and cross-of-two-subsets alike.
 
-Nothing here imports the CLI, Pydantic AI, or the config loader: the logic stays
+Nothing here imports the CLI, Pydantic AI, or the roster loader: the logic stays
 light and unit-testable, taking the roster only as an ordered list of names.
 """
 

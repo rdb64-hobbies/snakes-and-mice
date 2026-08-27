@@ -40,7 +40,7 @@ from typing import Any, Final
 
 import httpx
 
-from snakes_and_mice.config import ProviderSpec, load_roster
+from snakes_and_mice.roster import ProviderSpec, load_roster
 
 # A cap far below the player's own 16384 (§4): a looping model reaches it in seconds,
 # and a healthy one never comes close, so the probe stays quick either way.

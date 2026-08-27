@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from .cli_common import DEFAULT_RESULTS_PATH
-from .config import ConfigError, load_roster
+from .roster import ConfigError, load_roster
 from .console import render_fault_tally, render_standings
 from .faults import TournamentError
 from .result import MatchResult

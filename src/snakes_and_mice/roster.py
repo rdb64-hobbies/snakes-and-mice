@@ -1,10 +1,10 @@
-"""Loading the LLM roster and provider settings from the configuration files.
+"""The LLM roster: which players exist, and how each one's endpoint is reached.
 
-This is the "config loader" of §4/§8: it parses the three configuration
-sources — ``players.yaml`` (the roster), ``providers.yaml`` (custom
-OpenAI-compatible endpoints only), and ``.env`` (API keys) — into typed
-specifications, so the rest of the project sees a :class:`Roster` of named
-:class:`PlayerSpec` / :class:`ProviderSpec` entries instead of YAML.
+This is the roster loader of §4/§8. It parses the three configuration sources —
+``players.yaml`` (the roster), ``providers.yaml`` (custom OpenAI-compatible
+endpoints only), and ``.env`` (API keys) — into a :class:`Roster` of named
+:class:`PlayerSpec` / :class:`ProviderSpec` entries, so the rest of the project
+never sees YAML.
 
 The module deliberately stops there: it knows about *files*, not about models.
 Turning a :class:`PlayerSpec` into a Pydantic AI model, an agent, and an
@@ -44,10 +44,11 @@ class PlayerSpec(BaseModel):
     model: str
 
 
-OutputMode = Literal["tool", "native"]
+OutputMode = Literal["tool", "native", "prompted"]
 """How an endpoint is asked for the structured move (§4, "Structured output"):
 ``tool`` is Pydantic AI's default output tool, ``native`` the model's own
-JSON-schema response format."""
+JSON-schema response format, and ``prompted`` puts the schema in the prompt and
+parses the reply as text, constraining generation not at all."""
 
 
 class ProviderSpec(BaseModel):
