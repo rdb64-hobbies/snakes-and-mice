@@ -8,7 +8,7 @@
 Snakes and Mice is a two-player, turn-based board game — a variant of
 tic-tac-toe played on a larger grid where each player places two pieces per
 turn. This project provides a **game engine** and a framework in which
-**different types of players** (humans and various types of AI or 
+**different types of players** (humans and various types of AI or
 algorithmic bots) can play against each other.
 
 **Primary goal.** A primary purpose of this project is to **compare LLMs as a
@@ -34,7 +34,7 @@ The design goal is a clean separation between:
 - the **engine** (rules, board state, win/draw detection), and
 - **players** (agents that choose moves).
 
-The engine never knows or cares *what kind* of player is on either side.
+The engine never knows or cares _what kind_ of player is on either side.
 
 ## 2. Game play
 
@@ -74,7 +74,7 @@ Every cell is in exactly one of three states: **empty**, **mouse**, or
 
 ### 2.3 Lines
 
-A **line** is a set of 5 cells that a player must fully occupy to win. 
+A **line** is a set of 5 cells that a player must fully occupy to win.
 There are **12 lines** in total:
 
 - **5 rows:** each of `A`–`E`.
@@ -106,7 +106,7 @@ player that tracks its own board can place the snake correctly.
 - On a turn, the player makes one **move**, which normally consists of **placing
   two of their own pieces** on **two distinct empty cells**.
 - **Single-piece exception.** A move may instead place a **single** piece, but
-  *only* when that one piece **ends the game** — i.e. it completes a line (a win)
+  _only_ when that one piece **ends the game** — i.e. it completes a line (a win)
   or fills the board into a cat's game. This mirrors §2.6 and §2.7: if the first piece
   already ends the game, the second is never placed, so a one-piece move is the
   honest representation of that turn. Placing a single piece that leaves the game
@@ -124,7 +124,7 @@ A player **wins the moment they occupy all 5 cells of any line** (row, column,
 or diagonal) with their own pieces.
 
 - Win detection happens **after each individual piece placement**. If a player's
-  *first* of two pieces completes a line, they win immediately and the second
+  _first_ of two pieces completes a line, they win immediately and the second
   piece is not placed. A player that foresees this may submit a **single-piece
   move** (§2.5) for that winning piece alone.
 - The pre-placed (seeded) snake counts toward the Snake player's lines, wherever
@@ -176,7 +176,7 @@ unrepresentable (see §2.8):
   board** at construction. Parses/renders labels like `C3`.
 - `Move` — a frozen dataclass validated at construction to be **one or two
   `Cell`s** (and, if two, distinct), in the order the player plays them. A
-  single-cell move is structurally valid but *legal* only when that one piece
+  single-cell move is structurally valid but _legal_ only when that one piece
   ends the game; the engine enforces that at apply-time (§2.8).
 
 Constructing an invalid `Cell` or `Move` raises `IllegalMove` (§2.8).
@@ -253,7 +253,7 @@ class MoveChoice:
 - **Supplying `claimed_outcome` is optional.** Mechanical players (scripted,
   algorithmic, random) read the board correctly by construction and leave it
   `None`; the engine then performs no self-assessment check for them. The LLM
-  player *does* supply it, because whether a model correctly recognizes a
+  player _does_ supply it, because whether a model correctly recognizes a
   win / draw / ongoing position is itself part of what we measure.
 - **The engine checks the claim against ground truth.** After applying a legal
   move, the engine computes the true outcome; if `claimed_outcome` is present and
@@ -302,11 +302,11 @@ class Observer:
     def on_game_end(self, result: GameResult) -> None: ...
 ```
 
-Unlike a player, an observer never influences play; it only *receives* the
+Unlike a player, an observer never influences play; it only _receives_ the
 engine's authoritative board (read-only).
 
 A move is bracketed by **two** hooks. `on_move_start` fires at the top of every
-turn, *before* the player is asked for a move, so a watcher can show whose turn
+turn, _before_ the player is asked for a move, so a watcher can show whose turn
 it is the moment it begins. `on_move_end` fires once per **accepted** move —
 including the terminal one — after it has been applied, carrying the move and the
 resulting outcome. Splitting the two matters when producing a move is slow: an
@@ -395,24 +395,24 @@ Notes:
   affected game ends, and the match continues.
 - **`PLAYER_FAULT` covers several kinds of the same underlying failure** — "the
   player did not complete a valid turn":
-  - *Structural, construction-time* (`OFF_BOARD`, `DUPLICATE_CELLS`, and
+  - _Structural, construction-time_ (`OFF_BOARD`, `DUPLICATE_CELLS`, and
     `WRONG_PIECE_COUNT` for zero or three-plus cells): building the `Cell`/`Move`
     raises `IllegalMove`. Trusted players never trip this; a player parsing
     untrusted output (the LLM player) catches it and reports the reason via
     `MoveUnavailable`.
-  - *Engine-detected, stateful* (`CELL_NOT_EMPTY`, and `WRONG_PIECE_COUNT` for a
+  - _Engine-detected, stateful_ (`CELL_NOT_EMPTY`, and `WRONG_PIECE_COUNT` for a
     single-piece move that leaves the game in play): the player returns a
     well-typed `Move`, but the current board makes it illegal — a target cell is
     occupied, or the lone piece did not end the game. The engine's apply-time
     check raises `IllegalMove`, filling in `reason` and `attempted_move`.
-  - *Player-reported* (`UNPARSEABLE_OUTPUT`, `THINKING_LIMIT_EXCEEDED`, …): the
+  - _Player-reported_ (`UNPARSEABLE_OUTPUT`, `THINKING_LIMIT_EXCEEDED`, …): the
     player cannot even form a `Move`, so it raises `MoveUnavailable(reason)` from
     `choose_move`. Here the **player** supplies the `reason` — the engine cannot
     know it. The LLM player distinguishes a response truncated at the output-token
     limit (`THINKING_LIMIT_EXCEEDED`) from genuinely malformed output
     (`UNPARSEABLE_OUTPUT`) so the next game's feedback can tell it to think more
     briefly.
-  - *Engine-detected misread* (`WRONG_OUTCOME_CLAIM`): the move is legal, but the
+  - _Engine-detected misread_ (`WRONG_OUTCOME_CLAIM`): the move is legal, but the
     player's `claimed_outcome` disagrees with the true outcome. The engine
     records the legal `attempted_move` plus `claimed_outcome` and
     `actual_outcome`.
@@ -455,18 +455,18 @@ The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
 implementation order (the first four are implemented — see the milestones in §11):
 
-1. **Scripted player** *(implemented — 0.1)*. Initialized with a predetermined
+1. **Scripted player** _(implemented — 0.1)_. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
    deterministic games for testing the rules and engine (win detection, cat's
    game, illegal-move handling, etc.).
-2. **Random player** *(implemented — 0.2)*. Plays uniformly at random among legal moves: each turn it
+2. **Random player** _(implemented — 0.2)_. Plays uniformly at random among legal moves: each turn it
    places two pieces on two randomly chosen empty cells (or a single piece on the
    last empty cell, which necessarily ends the game). It tracks its own board
    through `observe_move` and makes no outcome claim. A trivial baseline, a
    sparring partner for the stronger players, and a convenient driver for
    non-deterministic tests. Its randomness is drawn from an injectable
    `random.Random`, so a seeded instance produces fully reproducible games.
-3. **Human player** *(implemented — 0.3)*. Reads a move interactively (input format `C3 D4` — two cells separated by a space).
+3. **Human player** _(implemented — 0.3)_. Reads a move interactively (input format `C3 D4` — two cells separated by a space).
    So a human is never knocked out by a slip, it **re-prompts** on any locally
    detectable mistake — an unparseable label, the wrong number of cells, an
    off-board or repeated cell, a target already occupied, or a lone piece that
@@ -475,28 +475,24 @@ implementation order (the first four are implemented — see the milestones in �
    outcome claim. End-of-input concedes the turn (a `PLAYER_FAULT`). Its input and
    output are injectable so it can be driven deterministically in tests. The
    engine stays the source of truth; the local checks only spare avoidable faults.
-4. **LLM player** *(implemented — 0.5)*. Chooses moves by querying a large language
+4. **LLM player** _(implemented — 0.5)_. Chooses moves by querying a large language
    model via Pydantic AI, with support for a **range of LLM providers and models**
    (Anthropic, OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom
    endpoints). Specified in full in §4.
-5. **Algorithmic player** *(planned)*. Plays **perfectly** via full-depth alpha–beta
+5. **Algorithmic player** _(implemented — 1.3)_. Plays **perfectly** via full-depth alpha–beta
    (minimax with pruning) search to terminal positions, backed by a transposition
    table keyed on a symmetry-canonical board. Specified in full in §10.
-6. **Reinforcement-learning player** *(planned)*. A policy trained via RL (self-play). Likely
+6. **Reinforcement-learning player** _(planned)_. A policy trained via RL (self-play). Likely
    needs supporting tooling (training loop, model persistence) beyond the game
    engine itself.
 
-Others may be added as the project evolves. Candidate ideas: a **heuristic
-player** (rule-based: win if you can, block an opponent's near-win, else a
-positional choice) as a cheap, explainable mid-strength opponent and a benchmark
-for the AI players; a **Monte Carlo Tree Search (MCTS) player**; and a
-**remote/network player** for play across machines.
+Others may be added as the project evolves.
 
 ### Tournaments
 
 The project supports a **tournament structure** that pits player types against
 each other over many games, composed from **matches** (§5) as its building block.
-A tournament is simply *any set of matches*, accumulated in a shared results file,
+A tournament is simply _any set of matches_, accumulated in a shared results file,
 with match-**running** kept deliberately separate from result-**tallying**. This
 is specified in full in §6, and together with the LLM player (§4) it defines the
 **1.0** release (§11).
@@ -506,7 +502,7 @@ is specified in full in §6, and together with the LLM player (§4) it defines t
 The **LLM player** chooses its moves by querying a large language model. It is the
 player type this project exists to compare: pitting models against one another (and
 against strong non-LLM players) over many games is the benchmark. Because whether a
-model can *reason* about the game — track the board, find lines, recognize a win or a
+model can _reason_ about the game — track the board, find lines, recognize a win or a
 dead position, avoid illegal moves — is exactly what we measure, the LLM player is
 given as little help as possible: it sees only the opponent's moves and must
 maintain everything else itself.
@@ -543,7 +539,7 @@ class LLMMove(BaseModel):
   the wrong number of cells — the player catches the `ValueError` / `IllegalMove` and
   raises `MoveUnavailable` with the matching reason (§3, "Game results and
   termination"), ending the game as a `PLAYER_FAULT`. Cells that are well-formed but
-  *illegal against the current board* (already occupied, or a lone piece that does
+  _illegal against the current board_ (already occupied, or a lone piece that does
   not end the game) are caught by the engine at apply-time — the same fault, detected
   one layer down.
 - **`claimed_outcome` is required** of the LLM (unlike the optional
@@ -552,77 +548,50 @@ class LLMMove(BaseModel):
   Recognizing the outcome is part of the reasoning test, so a wrong claim is a
   `WRONG_OUTCOME_CLAIM` fault (§3). The parsed move and this claim become the
   `MoveChoice` the player returns.
-- **`move_rationale`** is a brief, human-readable justification — a *summary* of why
+- **`move_rationale`** is a brief, human-readable justification — a _summary_ of why
   the model chose its move, not its full chain of thought. It is **log-only**: never
   validated, never acted on, kept for observation and later analysis. It is placed
   first in the schema so the model articulates a reason before committing to a move.
 
 **How the object is requested is a per-provider choice.** Most providers use Pydantic
-AI's default output *tool*; **Anthropic** cannot combine an output tool with thinking,
+AI's default output _tool_; **Anthropic** cannot combine an output tool with thinking,
 so its agent asks for the model's **native JSON-schema response format** instead. Both
 yield the same `LLMMove`, so nothing downstream varies; only the agent's construction
 does, which is why that knowledge sits with model resolution rather than in the player.
 
 A **custom endpoint declares its own mode** in `providers.yaml` (see "Model
-selection"), because for a self-hosted server the choice is a property of the
-deployment rather than of the provider kind. Three are offered, in decreasing order of
-how much they constrain generation: `tool` (the default), `native`, and `prompted` —
-the last putting the schema in the prompt and parsing the reply as text, so nothing
-constrains the model at all. The case that forces a move off `tool`: vLLM implements a tool-call format **per model family**, so a served model outside
-that set must borrow another family's `--tool-call-parser` — and since the
-structural-tag refactor (absent in vLLM 0.17, present by 0.24) that parser no longer
-merely *scrapes* the finished text but **compiles the decoding grammar**. A model held
-to a foreign tool-call syntax never reaches a state where stopping is allowed: it
-writes one correct call, is denied its end token, and repeats until `max_tokens`.
-Measured on a vLLM-served `NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4`, which vLLM has a
-reasoning parser for but no tool parser, every turn returned `finish_reason: length`
-carrying ~190 byte-identical calls — while `qwen3.8` and `gpt-oss-120b`, each served
-with its own family's parser, were unaffected on the same container. Native output
-sidesteps the tool parser entirely: the grammar is compiled from the schema, and with
-a reasoning parser configured the server holds it back until the thinking ends.
+selection"), since for a self-hosted server this is a property of the deployment
+rather than of the provider kind. Three modes, in decreasing order of how much they
+constrain generation:
+
+- **`tool`** (the default) — Pydantic AI's output tool.
+- **`native`** — the model's own JSON-schema response format. No tool parser is
+  involved, and with a reasoning parser configured the server holds the grammar back
+  until the thinking ends.
+- **`prompted`** — the schema goes in the prompt and the reply is parsed as text, so
+  nothing constrains generation at all.
+
+**When `tool` fails.** vLLM implements a tool-call format _per model family_, so a
+served model outside that set must borrow another family's `--tool-call-parser`. On
+older vLLM (0.17) the parser only _scraped_ the finished text, and borrowing was
+harmless; from the structural-tag refactor (present by 0.24) it also **compiles the
+decoding grammar**, and a model held to a foreign tool-call syntax never reaches a
+state where stopping is allowed — it rewrites its call until `max_tokens`, and the
+thread then grows until the provider rejects it. The fix is `native`, served with no
+`--tool-call-parser` at all.
 [`tools/probe_tool_termination.py`](tools/probe_tool_termination.py) asks one endpoint
 for a move both ways and reports how each ended, which is how the mode is chosen.
 
-Measured on that same model and container, native output settles termination: over a
-10-game match every response terminated on its own (41 `stop`, plus one genuine
-`THINKING_LIMIT_EXCEEDED`), no response carried a tool call, and the thread grew
-598 → 4,828 input tokens across 42 turns rather than 1,078 → 231,865.
-
-**Whether the mode is neutral for play is unsettled**, and worth stating carefully
-because the question looks answerable and is not. Measured against the perfect player
-from the Mouse seat, on the same model:
-
-| container / mode | games | draws | faults | reasoning |
-| --- | --- | --- | --- | --- |
-| 0.17.1, tool (a post-hoc parser, no grammar) | 36 (4×10) | 78% | 11% | 15,275 |
-| 0.17.1, native | 39 (1×40) | 49% | 31% | 9,351 |
-| 0.17.1, prompted | 39 (1×40) | 49% | 33% | 8,417 |
-| 0.27.1, native | 18 (2×10) | 50% | 22% | — |
-| 0.27.1, tool | — | never terminates | — | — |
-
-The obvious reading — that constraining generation costs play quality — does not
-survive. `prompted` constrains nothing at all (no tool, no `response_format`, the
-schema in the prompt) and lands within one game of `native`. Two other things
-confound the gap that remains. **Match length**: both 40-game runs decline from 60%
-draws over their first ten games to 49% overall, so a long match hurts on its own,
-which is why matches are kept short. And restricted to matched 10-game structure the
-mode difference is 78% vs 55% on draws (p=0.05) and 11% vs 26% on faults (p=0.14) —
-suggestive, not established.
-
-What is consistent is that both non-tool modes reason ~40% less on the same container.
-Board tracking is what the reasoning is for, and `CELL_NOT_EMPTY` is the dominant
-fault in every non-tool run, so there is a plausible chain there — but no mechanism
-for why asking for the output differently changes how much a model thinks.
-
-Two practical consequences. `native` is the default choice for a self-hosted endpoint,
-since it and `prompted` play alike and only `native`'s grammar guarantees parseable
-output. And because unconstrained tool mode exists only on a vLLM generation the
-project has left behind, results measured under it are historical: a mode change is a
-possible benchmark change, so a series that crosses one should say so rather than
-pool.
+**The mode is not known to be play-neutral.** Measured against the perfect player, one
+model drew far more often and reasoned ~40% longer under a _post-hoc_ tool parser than
+under `native` or `prompted`, which play alike. The grammar is not the cause —
+`prompted` constrains nothing and still matches `native` — and no mechanism has been
+found. Treat a mode change as a possible benchmark change: do not pool results across
+one, and prefer `native` to `prompted` where both work, since only `native` guarantees
+parseable output.
 
 **Responses are capped at a generous output-token budget** (16384, against Pydantic
-AI's 4096 default). On Anthropic that ceiling covers the thinking *and* the answer
+AI's 4096 default). On Anthropic that ceiling covers the thinking _and_ the answer
 together, so at high effort the reasoning alone can approach a small cap and clip the
 trailing JSON — which then fails to parse and is scored as an `UNPARSEABLE_OUTPUT`
 fault rather than the model's play. Only tokens actually produced are billed, so a
@@ -666,73 +635,54 @@ the next user turn on the following `choose_move`.
 
 Because the thread spans the whole match and every provider re-sends the **entire**
 thread as input on each turn, a reasoning model's own accumulated chain-of-thought can
-dominate the payload — and grow super-linearly over a match, since each turn's
-reasoning is re-sent on every later turn. Left unchecked this both inflates cost and
-caps how many games fit before the thread outgrows the model's input budget. Yet that
-prior reasoning is not needed to keep playing: the board is fully reconstructible from
-the move list, and the model reasons afresh — still at the full effort level (see
-"Thinking / effort level") — every turn.
+dominate the payload, inflating cost and capping how many games fit before the thread
+outgrows the model's input budget. That prior reasoning is not needed to keep playing:
+the board is fully reconstructible from the move list, and the model reasons afresh —
+still at the full effort level (see "Thinking / effort level") — every turn.
 
-So the player *can* attach a Pydantic AI **history processor** (the `ProcessHistory`
+So the player _can_ attach a Pydantic AI **history processor** (the `ProcessHistory`
 capability) that strips prior reasoning from what is **sent**, turn by turn, without
 lowering the thinking level. The rule is by **shape**, not by provider — a part is
 stripped when it **has text** and **carries no signature**:
 
 - **Has text** is the whole payload worth dropping, and it excludes OpenAI's
-  Responses API and Anthropic outright: both emit *empty-content* reasoning parts, so
+  Responses API and Anthropic outright: both emit _empty-content_ reasoning parts, so
   there is nothing to save by dropping them.
 - **No signature** keeps the history valid. A signature is the provider's own handle
   on the reasoning, needed when the turn is re-sent; dropping a signed part
   **invalidates** the re-sent history — OpenAI rejects the dangling reference with an
   HTTP 400.
 
-Deliberately **not** tested is the part's `id`. For an OpenAI-compatible chat endpoint
-(ollama, vLLM) Pydantic AI sets the id to the literal *name of the field* the reasoning
-arrived in — `reasoning` or `reasoning_content` — a constant label that nothing
-references, not a provider handle. An earlier rule that also required `id is None`
-therefore skipped every locally served model, which is exactly where the bulk sits.
+The part's `id` is deliberately **not** tested: on an OpenAI-compatible endpoint
+Pydantic AI sets it to the name of the field the reasoning arrived in, a constant label
+rather than a provider handle, so requiring `id is None` would skip every locally
+served model — which is exactly where the bulk sits.
 
 **Whether stripping saves anything is decided downstream, by each model build's chat
-template**, and the project cannot detect which case it is in:
-
-- A vLLM-served `qwen3.8` renders re-sent reasoning back into the prompt as
-  `<think>…</think>`, at ~2.9 characters per input token — real context growth of
-  2,500–3,600 tokens per turn. It reads **either** field name: chat completions
-  normalize the two before templating. Only the Jinja template reached through
-  `/tokenize` is picky, rendering `reasoning` and dropping `reasoning_content` — an
-  earlier measurement took that path and recorded the template's asymmetry as the
-  model's.
-- A vLLM-served `nemotron-3-super` ignores the same field entirely: the text is
-  uploaded on every request and never tokenized, contributing **zero** prompt tokens.
-- A vLLM-served `gpt-oss-120b` renders it at ~2.9 characters per input token, also
-  reading either field name, and grows a real match's request by ~2,600 tokens per
-  turn — enough that a 10-game match approaches its 131,072 context limit.
-
-So identical clients against identical servers can differ purely by model. The rule
-strips the text either way and lets the template decide whether that mattered.
-
-The measurement must go through the **live** request path, not `/tokenize`: a server
-can render one conversation two ways — vLLM applies the Jinja chat template at
-`/tokenize` but encodes `gpt-oss` through harmony for chat completions — and for that
-model the two disagree outright, `/tokenize` reporting the reasoning dropped where the
-real requests pay for every token of it. `probe_reasoning_field.py` measures with a
-one-token completion and reports any such disagreement, since a false "dropped" argues
-against pruning exactly where pruning pays most.
+template**, and the project cannot detect which case it is in: one served model renders
+re-sent reasoning back into the prompt and pays for every token of it, while another
+ignores the field entirely and pays nothing — so identical clients against identical
+servers can differ purely by model. The rule strips the text either way and lets the
+template decide whether that mattered.
+[`tools/probe_reasoning_field.py`](tools/probe_reasoning_field.py) answers it for one
+endpoint. It measures through the **live** request path rather than `/tokenize`,
+because a server can render the same conversation two ways and where the two disagree
+it is the live path that decides — a false "dropped" would argue against pruning
+exactly where pruning pays most.
 
 **Pruning is off by default, enabled per run by `--prune-thinking` (§7).** The reason
 is benchmark validity rather than economy. Anthropic, OpenAI and Gemini all hand a
 model its own prior reasoning back regardless of what is stripped, via a signature the
-provider reconstructs server-side — Gemini's `thought_signature` alone runs to ~1 input
-token per reasoning token, several times what stripping its thought summary saves. Only
-a model with no such channel actually loses sight of its earlier thinking. Pruning by
-default would therefore present a systematically different conversation to different
-providers, in a benchmark whose whole purpose is comparing reasoning across models. The
-default keeps whatever each provider natively carries; the flag exists for long
-tournament runs where context growth is the binding constraint.
+provider reconstructs server-side. Only a model with no such channel actually loses
+sight of its earlier thinking. Pruning by default would therefore present a
+systematically different conversation to different providers, in a benchmark whose
+whole purpose is comparing reasoning across models. The default keeps whatever each
+provider natively carries; the flag exists for long tournament runs where context
+growth is the binding constraint.
 
 This is a **wire-only** transform: it rewrites only the request payload. The player's
 stored thread — and therefore the `--log-llm` dump (see "Message logging") — keeps the
-full reasoning of every turn for debugging, and the *current* turn's thinking is never
+full reasoning of every turn for debugging, and the _current_ turn's thinking is never
 touched (only prior turns are pruned, and only in what is sent). It never changes which
 moves are legal or how faults are scored.
 
@@ -740,20 +690,20 @@ moves are legal or how faults are scored.
 
 An illegal or unusable move **ends the game** — no retries, no re-prompting within a
 game (contrast the human player, §3, which re-prompts a person). The consequence is
-delivered to the model as feedback in the *next* game's opening messages, not
+delivered to the model as feedback in the _next_ game's opening messages, not
 mid-game. This makes "does the model play legal, well-assessed moves" a scored
 property of the benchmark rather than something the harness papers over.
 
-(Transient *transport* failures — read/connect timeouts, dropped connections — are a
+(Transient _transport_ failures — read/connect timeouts, dropped connections — are a
 separate, operational concern, not a player fault. The LLM player retries the call a
 few times with exponential backoff; if the backend stays unreachable it raises
 `PlayerUnavailable`, and the engine ends that game as a no-contest (`ABORTED`, §3)
 without charging the player or aborting the match. This is distinct from a
-*configuration* failure — a misspelled/unavailable model, a rejected key — which no
+_configuration_ failure — a misspelled/unavailable model, a rejected key — which no
 retry fixes and which aborts the whole run with a clear message, not a game outcome.)
 
 Because there are no in-run retries, an unparseable-output fault can leave the thread
-in a shape the provider will not accept on the *next* turn. When the model's bad
+in a shape the provider will not accept on the _next_ turn. When the model's bad
 output is a structured-output tool-call whose arguments fail validation (e.g. a
 mistyped field name), Pydantic AI raises before emitting the tool-return it would
 normally use to close that call — so the faulting turn, persisted verbatim for the
@@ -763,7 +713,7 @@ when the message history contains unprocessed tool calls"), which would abort th
 game and, misread as a backend error, the whole match. So when the player records a
 faulting turn it keeps the broken call verbatim but immediately follows it with a
 synthetic tool-return, leaving the stored thread a well-formed message history that is
-safe to re-send. This is the *only* point a dangling call can arise (the normal path
+safe to re-send. This is the _only_ point a dangling call can arise (the normal path
 appends only Pydantic AI's own well-formed turns), so the repair is done once, where
 the turn is recorded, rather than re-scanned on every request.
 
@@ -772,13 +722,13 @@ the turn is recorded, rather than re-scanned on every request.
 A player is specified by a **provider** and a **model name**, one model per player
 instance. Providers supported to start:
 
-| Provider | Kind | Key (env var) |
-| --- | --- | --- |
-| `anthropic` | built-in | `ANTHROPIC_API_KEY` |
-| `openai` | built-in | `OPENAI_API_KEY` |
-| `gemini` | built-in (Google Gemini API, key-based — not Vertex) | `GEMINI_API_KEY` |
-| `openrouter` | built-in | `OPENROUTER_API_KEY` |
-| *(custom name)* | OpenAI-compatible endpoint (e.g. ollama, vLLM) | declared per provider |
+| Provider        | Kind                                                 | Key (env var)         |
+| --------------- | ---------------------------------------------------- | --------------------- |
+| `anthropic`     | built-in                                             | `ANTHROPIC_API_KEY`   |
+| `openai`        | built-in                                             | `OPENAI_API_KEY`      |
+| `gemini`        | built-in (Google Gemini API, key-based — not Vertex) | `GEMINI_API_KEY`      |
+| `openrouter`    | built-in                                             | `OPENROUTER_API_KEY`  |
+| _(custom name)_ | OpenAI-compatible endpoint (e.g. ollama, vLLM)       | declared per provider |
 
 All four built-ins — **including OpenRouter** — are supported directly by Pydantic
 AI, so none needs extra endpoint configuration; we resolve `(provider, model)` to the
@@ -803,7 +753,7 @@ Three sources of configuration, parsed **outside** the player (§8, Architecture
       provider: gemini
       model: gemini-3-pro
     - name: llama-local
-      provider: my-ollama       # a custom provider, defined in providers.yaml
+      provider: my-ollama # a custom provider, defined in providers.yaml
       model: llama3.3
   ```
 
@@ -822,7 +772,7 @@ Three sources of configuration, parsed **outside** the player (§8, Architecture
       base_url: http://gpu-box:8000/v1
       api_key_env: VLLM_API_KEY
     - name: my-vllm-native
-      base_url: http://gpu-box:8000/v1     # the same server, asked the other way
+      base_url: http://gpu-box:8000/v1 # the same server, asked the other way
       api_key_env: VLLM_API_KEY
       output_mode: native
   ```
@@ -848,7 +798,7 @@ copied and edited into the real (git-ignored) files.
 
 A **roster loader** (`roster`) reads these three sources and produces typed, validated
 specifications — a roster of named player and provider entries — and stops there. It
-knows about *files*, not about models: resolving a `(provider, model)` spec to a
+knows about _files_, not about models: resolving a `(provider, model)` spec to a
 Pydantic AI model and agent, and building a player from it, is the LLM player's own
 job, offered as the alternate constructor `LLMPlayer.from_roster(name, roster)`. So
 the split is clean in both directions — the roster loader never imports Pydantic AI,
@@ -867,7 +817,7 @@ unsupported level to the nearest available one.
 For now every LLM player uses the **same** level — a single global default, set to
 **`high`** — so each model reasons strongly and comparisons are made on an even
 footing, without the steep cost of the top (`xhigh`) tier. "Consistent" here means
-*each model at the same effort level*, not a byte-identical configuration across
+_each model at the same effort level_, not a byte-identical configuration across
 providers. Per-player effort levels and provider-specific setting overrides are
 deliberately deferred.
 
@@ -875,12 +825,11 @@ deliberately deferred.
 drops the unified setting **silently** for any model whose profile reports no support
 — which is every OpenAI-compatible endpoint whose model name it cannot recognize, so
 most locally served models. The request still succeeds; the model simply reasons at
-whatever its server defaults to, which need not be `high` and need not even offer it
-(one vLLM-served `qwen3.8` container accepts only `xhigh` / `medium` / `low`, defaults
-its chat template to `xhigh`, and returns HTTP 400 for `high`). An over-large default
-also interacts with `MAX_OUTPUT_TOKENS`: reasoning that runs to the cap yields a
+whatever its server defaults to, which need not be `high`, need not offer `high` at
+all, and on some builds is not settable by any means. An over-large default also
+interacts with `MAX_OUTPUT_TOKENS`: reasoning that runs to the cap yields a
 `THINKING_LIMIT_EXCEEDED` fault, which would then be scoring the harness rather than
-the model.
+the model — so a level above the roster's is not the safe direction to err in.
 
 The project does **not** fail or fall back in that case — the fix belongs on the
 server (e.g. vLLM's `--default-chat-template-kwargs`), and a hard failure would make
@@ -890,7 +839,7 @@ distinguishable without probing the endpoint.
 
 ### Message logging (debugging)
 
-Because the benchmark turns on *how a model reasons*, it helps to be able to read
+Because the benchmark turns on _how a model reasons_, it helps to be able to read
 the exact conversation a player had with its model. A debugging option captures
 that: with the CLI flag **`--log-llm [DIR]`** (off by default; `DIR` defaults to a
 git-ignored `llm-logs/`), each LLM player writes the **full message thread** — the
@@ -904,7 +853,7 @@ later requests prune it (see "Pruning re-sent reasoning") — as JSON under `DIR
   the deferred `end_game` feedback — all in order, with whatever metadata the library
   records (model settings, usage, timestamps). Crucially it preserves **every turn's
   thinking**, including the prior-turn reasoning that "Pruning re-sent reasoning"
-  strips from later *requests*: the log is the debugging record, not the wire form. So
+  strips from later _requests_: the log is the debugging record, not the wire form. So
   the player accumulates the thread incrementally, turn by turn, rather than rebuilding
   it from the agent's `all_messages()` — which now reports the strip-processed history
   and would progressively erase earlier turns' thinking from the dump.
@@ -922,6 +871,37 @@ later requests prune it (see "Pruning re-sent reasoning") — as JSON under `DIR
 
 This is purely an observation aid: it never changes what is sent to the model, and
 never affects how moves or faults are scored.
+
+### Probing a deployment
+
+Two properties of a self-hosted endpoint decide how the LLM player must be configured
+against it, and **neither is detectable from inside the project**: both follow from the
+served model's chat template and the server's build. Each has a probe that answers it
+by measuring. Both take one argument — a provider name from `providers.yaml` — print a
+verdict, and are strictly read-only: they play no game, write no log, and change
+nothing about a run.
+
+- **[`tools/probe_tool_termination.py`](tools/probe_tool_termination.py)** — _can this
+  endpoint finish a move, and in which output mode?_ It asks for one move twice, once
+  through a forced output tool and once through a JSON-schema response format, and
+  reports each attempt's `finish_reason`, tool-call count and output-token count. A
+  healthy path stops on its own; the failure is unmistakable — a run to the token cap
+  carrying repeated identical calls. This is what selects `output_mode` (see
+  "Structured output"). A refusal counts as an answer: a form the endpoint rejects here
+  is a form it will reject in a game.
+
+- **[`tools/probe_reasoning_field.py`](tools/probe_reasoning_field.py)** — _does re-sent
+  reasoning cost input tokens?_ It sends the same short thread three ways — prior
+  reasoning carried in `reasoning`, in `reasoning_content`, and omitted — and compares
+  prompt length, reporting `RENDERED` with a chars-per-token rate, or `DROPPED`. That
+  decides whether `--prune-thinking` buys anything here (see "Pruning re-sent
+  reasoning"). It measures through the **live** request path rather than `/tokenize`,
+  since a server can render one conversation two ways, and reports any disagreement
+  between them.
+
+Re-run both whenever the container, the served model, or the serve flags change: the
+answers are properties of the deployment, not of this project, and a stale answer is
+worse than none.
 
 ### Deferred for now
 
@@ -1053,7 +1033,7 @@ observer at `MOVE`** (a coarser request is overridden, with a message).
 
 ## 6. Tournaments
 
-A **tournament** is simply a **set of matches** — *any* set, with no structural
+A **tournament** is simply a **set of matches** — _any_ set, with no structural
 requirement on which players meet or how often. This makes the tournament the
 loosest possible composition of the match building block (§5), and it lets the
 project keep **running matches** entirely separate from **tallying results**,
@@ -1100,7 +1080,7 @@ matches from **two player subsets** and appends each result. Appending is
 intrinsic to this command (its whole purpose); its `--tournament-results [FILE]`
 only overrides the default path.
 
-*The one generating operation.* A match is an ordered `(mouse, snake)` pair of
+_The one generating operation._ A match is an ordered `(mouse, snake)` pair of
 distinct players. Given subsets **A** and **B**, the command emits a match for
 every ordered distinct pair `(x, y)` whose unordered matchup **straddles** the two
 subsets:
@@ -1121,10 +1101,10 @@ it:
   each, both seats — `2·N·M` matches for disjoint subsets of size `N` and `M`,
   fewer when they overlap (`x ≠ y` drops the self-play). The motivating case is
   **introducing new players**: A = the newcomers, B = `all` plays each newcomer
-  against the whole roster, both seats, *without* making the existing players
+  against the whole roster, both seats, _without_ making the existing players
   replay one another (a pair of two existing players fails the straddle predicate).
 
-*Subset selectors.* Each of A (`--players`, default `all`) and B (`--against`,
+_Subset selectors._ Each of A (`--players`, default `all`) and B (`--against`,
 default `same`) is given by exactly **one** selector:
 
 - an explicit list of player names,
@@ -1140,7 +1120,7 @@ a documented contract, and roster loading preserves the file's order. The pure,
 unit-testable schedule computation — subsets + roster order → the ordered list of
 `(mouse, snake)` name pairs — is kept separate from argument parsing.
 
-*Other options.* `--games N` sets a uniform game count for every match; `--seed`
+_Other options._ `--games N` sets a uniform game count for every match; `--seed`
 sets the opening for every game — `random` (the default) or a fixed cell like
 `B3` (§5); `--watch` selects the observation level (§5), defaulting to `game`
 (coarser than `play-match`, since a batch can be large). **Human players are rejected** — a batch
@@ -1156,14 +1136,14 @@ and prints **per-player standings**. For each player — keyed by the `name` in
 `MatchResult.names`, so a name reused across models is merged — it walks every
 match the player appears in, notes which side the player took, and accumulates:
 
-| Column | If the player was Mouse | If the player was Snake |
-| --- | --- | --- |
-| `played` (excl. aborted) | `num_games − aborted` | `num_games − aborted` |
-| `won` | `mouse_wins` | `snake_wins` |
-| `lost` | `snake_wins` | `mouse_wins` |
-| `tied` | `cats_games` | `cats_games` |
-| `faulted` | `mouse_faults` | `snake_faults` |
-| `opponent_faulted` | `snake_faults` | `mouse_faults` |
+| Column                   | If the player was Mouse | If the player was Snake |
+| ------------------------ | ----------------------- | ----------------------- |
+| `played` (excl. aborted) | `num_games − aborted`   | `num_games − aborted`   |
+| `won`                    | `mouse_wins`            | `snake_wins`            |
+| `lost`                   | `snake_wins`            | `mouse_wins`            |
+| `tied`                   | `cats_games`            | `cats_games`            |
+| `faulted`                | `mouse_faults`          | `snake_faults`          |
+| `opponent_faulted`       | `snake_faults`          | `mouse_faults`          |
 
 These six categories **reconcile**: `played = won + lost + tied + faulted +
 opponent_faulted`. **Aborted games are excluded** everywhere — they are charged to
@@ -1172,11 +1152,11 @@ neither side (§3).
 Derived percentages:
 
 - **`win%` = `won / (won + lost + tied)`** and **`loss%` = `lost / (won + lost +
-  tied)`** — the denominator being the games played with **neither** side faulting
+tied)`** — the denominator being the games played with **neither** side faulting
   (a fault is not a win or a loss for either side, §3). When that denominator is
   `0` the percentage is undefined and shown as `—`.
 - **`fault%` = `faulted / played`** — here the denominator is games played
-  (excl. aborted), since a fault *is* a played game.
+  (excl. aborted), since a fault _is_ a played game.
 
 `--sort win%|loss%|fault%` (default `win%`) orders the standings **best-on-top**:
 `win%` descending, `loss%` and `fault%` ascending (fewest losses / fewest faults
@@ -1231,9 +1211,9 @@ against the whole roster.
 `--tournament-results [FILE]` selects the file (default `tournament-results.jsonl`)
 and `--sort win%|loss%|fault%` (default `win%`) orders the table.
 
-## 8. Architecture (proposed)
+## 8. Architecture
 
-Rough module layout (subject to change once we start coding):
+Rough module layout:
 
 - `board` / `core` — board representation, move validation, applying moves, and
   win/draw detection.
@@ -1265,9 +1245,11 @@ Rough module layout (subject to change once we start coding):
   construction, roster loading, and `--watch` handling via a common helper
   (`cli_common`): `match_cli` (`play-match`), `matches_cli`
   (`play-tournament-matches`), and `tally_cli` (`tally-tournament`).
-
-Data types to nail down when we build: cell coordinate, piece/player enum,
-board, move (a pair of cells), and game result.
+- `tools/` — standalone programs outside the package, each specified where the thing
+  it measures is: the endpoint probes (§4, "Probing a deployment"), the tie-break
+  benchmark (§10, "Choosing among optimal moves"), and the offline solver, which has
+  its own document (`tools/solver/SPEC.md`). They import the package but nothing in
+  the package imports them, so a tool may take dependencies the engine does not have.
 
 ## 9. Tech stack & tooling
 
@@ -1291,15 +1273,15 @@ board, move (a pair of cells), and game result.
 
 The **algorithmic player** plays the game **perfectly**: it searches the whole
 game to its conclusion and always makes a game-theoretically optimal move. It is
-the *calibrated, fixed-strength yardstick* of §1 — the strong non-LLM opponent a
+the _calibrated, fixed-strength yardstick_ of §1 — the strong non-LLM opponent a
 model can be measured against — and, unlike the LLM player, it never faults and
 never misreads an outcome. Because the board is tiny (25 cells, at most 12 moves),
-"perfect" is not an aspiration reached through heuristics but a *fully solvable*
+"perfect" is not an aspiration reached through heuristics but a _fully solvable_
 target: the player searches every relevant line of play to a terminal position and
 backs the true value up to the root.
 
 The game has in fact been solved outright, and the player is built on that result.
-Searching the *opening* live is hopeless — the tree above ~16 empty cells is far too
+Searching the _opening_ live is hopeless — the tree above ~16 empty cells is far too
 wide — so the player is **two-tier**: an **offline retrograde solve** precomputes the
 exact value of every reachable position in the upper plies, and at run time the player
 **looks the opening up** and **live-searches the endgame**, where full-depth search is
@@ -1324,7 +1306,7 @@ player is never asked to move in a lost position. Every seed is drawn (see "The
 result: the game is a draw" below), so a game starts drawn; the player never leaves a
 drawn position, and an opponent moving from a drawn position cannot manufacture a win
 out of it — so by induction every position it is handed is drawn or won. The rule
-still earns its keep at the *interior* nodes of the search, where lost positions are
+still earns its keep at the _interior_ nodes of the search, where lost positions are
 everywhere, and it costs nothing to state, since it falls straight out of the
 depth-folded score (see "Exact, depth-aware scoring"). The only way to reach it at the
 root would be to drop the player into a lost position it did not play itself into,
@@ -1356,27 +1338,27 @@ moves"), so a seeded instance is fully reproducible.
 
 The engine of the player is **alpha–beta search (minimax with pruning)** carried
 **all the way to terminal positions** — a win, a cat's game — rather than to a
-fixed ply depth with a heuristic evaluation. Leaves are therefore scored *exactly*,
+fixed ply depth with a heuristic evaluation. Leaves are therefore scored _exactly_,
 not estimated; the pruning only removes branches that provably cannot affect the
 root value, so the result is identical to exhaustive minimax but far cheaper.
 
 Move generation follows §2.5: the moves at a node are all pairs of two distinct
 empty cells, plus any **single-piece move that ends the game** (completes a line, or
 fills the board into a cat's game). Win detection runs after each individual piece,
-so a move whose *first* piece completes a line is an immediate win; when the player
+so a move whose _first_ piece completes a line is an immediate win; when the player
 has such a one-piece win it returns a **single-piece** `MoveChoice`, the honest
 representation of that turn (§2.5).
 
 ### Exact, depth-aware scoring
 
-**What `depth` means.** `depth` is a property of a *position*, not of the search that
+**What `depth` means.** `depth` is a property of a _position_, not of the search that
 reached it: it is read straight off the piece counts as `(occupied − 1) // 2`, the
 number of moves already played. Two things follow. Values are **absolute** rather than
 relative to a search root, so a value computed anywhere is comparable with one computed
 anywhere else — which is what lets the offline table and the live search be mixed
 within a single game (§10, "The opening table"). And the `depth` in a winning score is
 that of the node **from which the winning move is made**, not of the position the win
-lands in: a node whose mover *has* a win is scored without descending into it. That
+lands in: a node whose mover _has_ a win is scored without descending into it. That
 distinction is a constant 1 either way and invisible inside a single search, but both
 tiers must adopt the same one or their values disagree at every boundary.
 
@@ -1400,7 +1382,7 @@ above: among wins a **smaller** depth scores higher, so the player wins as quick
 it can; among losses `−(WIN − depth)` is less negative for a **larger** depth, so it
 resists as long as it can — behaviour the search relies on internally but the player
 never gets to display, since it is never handed a lost position (see the note under
-*What "perfect" means*).
+_What "perfect" means_).
 
 The search is a standard **negamax**: the value of a non-terminal node is the maximum
 over its legal moves of the terminal score (if the move ends the game) or
@@ -1428,8 +1410,8 @@ of the square. Every element has the form `(r,c) ↦ (σr, τc)` or `(r,c) ↦ (
 (the latter transposing rows and columns), where `σ` is one of the 8 permutations of
 `{0..4}` that commute with the reversal `ρ = (0 4)(1 3)` (equivalently: fix 2 and
 preserve the pairs `{0,4}`, `{1,3}`), and `τ ∈ {σ, ρσ}`. D₄ is exactly the slice
-with `σ ∈ {identity, ρ}`; the other 24 elements are "warps" — such as *swap rows B↔D
-and columns 2↔4*, written in the board's own labels — that preserve every line
+with `σ ∈ {identity, ρ}`; the other 24 elements are "warps" — such as _swap rows B↔D
+and columns 2↔4_, written in the board's own labels — that preserve every line
 without being a rigid motion.
 
 Under G the 25 possible seed cells fall into just **4 equivalence classes**, and —
@@ -1437,14 +1419,14 @@ crucially — **every** seed has a stabilizer of order ≥ 4, so even an off-axi
 that D₄ leaves untouched still collapses ~4-fold at the root.
 
 Row and column positions are **0-based** throughout, matching the implementation.
-Board *labels* (rows `A`–`E`, columns `1`–`5`) are a separate, presentational layer:
+Board _labels_ (rows `A`–`E`, columns `1`–`5`) are a separate, presentational layer:
 column label `2` is position `1`, and the warp above is `(1 3)` on columns.
 
 **Canonical position.** Number the cells `0..24` (`index(r,c) = 5r + c`) and
 represent a position as two 25-bit masks — mouse and snake (the seed is just a snake
 bit). Each of the 32 symmetries is a precomputed index permutation, so transforming
 a mask is a bit permutation. The **canonical key** is the numerically smallest of
-the 32 transformed positions, with mouse and snake transformed *together* by the
+the 32 transformed positions, with mouse and snake transformed _together_ by the
 same symmetry and packed into one integer for comparison:
 
 ```python
@@ -1492,7 +1474,7 @@ wrong, and the random pick is applied to whatever survives.
 1. **Trap count** — of the opponent's replies to this move, how many would throw the
    position away (turn a draw into a loss for them, or let us escape a lost one).
    This is not a heuristic: it is the exact quantity a swindle-seeking tie-break
-   wants, and it is *counted*, by valuing every reply. Only two-piece replies are
+   wants, and it is _counted_, by valuing every reply. Only two-piece replies are
    counted; a single-piece move is legal only when it ends the game (§2.5), and
    neither of its forms can be a blunder in our favour.
 2. **Liveness** — our pieces in lines the opponent has not yet touched, with the
@@ -1500,7 +1482,7 @@ wrong, and the random pick is applied to whatever survives.
    spent; the squaring is because threat value is sharply non-linear here — a move
    places two pieces, so three of ours in a live line is already a win-next-turn
    threat, making concentration worth far more than the same pieces spread thin.
-   This *is* a heuristic, standing in for the traps that lie deeper than one reply,
+   This _is_ a heuristic, standing in for the traps that lie deeper than one reply,
    in the band where counting them exactly is too slow.
 3. **Uniformly at random**, from its injected `random.Random`, over whatever is left.
 
@@ -1514,56 +1496,36 @@ to reduce that variety only where it buys something real.
 
 Two gates enforce that, both set by measurement:
 
-- **Trap counting is skipped where it is provably vacuous or unaffordably slow.**
-  Vacuous: a node whose grandchildren all sit at **20 or more empty cells** has no
-  losing reply to find, since every such position is drawn (see "The result" below).
-  That is exactly the Mouse's first move — the widest node in the game (276 moves) —
-  so the gate saves the most expensive count *and* keeps the opening uniformly
-  random. Unaffordable: above the table's floor the extra ply is ruinous. Measured
-  here, valuing every grandchild costs **~18–23 s at 16 empty cells**, and the Mouse
-  chooses at 16 in nearly every game, so that alone would dominate every match; a
-  null-window test ("does this reply lose?" rather than "what is it worth?") does not
-  help, because proving *no* win exists costs nearly the full search anyway. So the
-  count runs only where the **table** already covers the grandchild layer — the
-  player's choices at 22 and 20 empty cells, at ~0.3–0.4 s — or where the position is
-  deep enough to search, at **14 empty cells and below**.
+- **Trap counting runs only at 22 and 20 empty cells, and at 14 and below.** Above
+  that it is either vacuous or unaffordable. Vacuous: every position with 20 or more
+  empty cells is drawn (see "The result" below), so a node whose grandchildren all sit
+  there has no losing reply to find — which is exactly the Mouse's first move, the
+  widest node in the game, so the gate skips the most expensive count _and_ leaves the
+  opening uniformly random. Unaffordable: counting needs every reply valued, which
+  costs tens of seconds per move above the table's floor, where the Mouse chooses in
+  nearly every game. So the count runs where the **table** already covers the
+  grandchild layer, or deep enough to search outright. The 14 threshold is the one
+  gate not settled by a measured win, and is called out as such: it discriminates in
+  most decisions there but what it is _worth_ is untested, since `random` leaves no
+  headroom and the project has no mid-strength fallible opponent to measure against.
 
-  That last threshold is the one gate here **not** settled by a measured win, and is
-  called out as such. At 14 the count costs ~1.1 s on top of a ~0.4 s move, and only
-  the Snake ever chooses there (the Mouse's nodes are 24, 20, 16, 12, …), so it falls
-  on a single move of the minority of games that reach it — ~46% of a bulk match
-  against the instant `random` player, but nothing beside an LLM's own per-move
-  latency, which is the matchup the player exists for. It is not a no-op: at 14 the
-  count discriminates in ~94% of decisions and changes the surviving candidates in
-  ~34%. What it is *worth* is untested, because `random` leaves no headroom (the
-  player already wins ~98% without it) and the project has no mid-strength fallible
-  opponent to measure against.
 - **Liveness is gated to 18 empty cells and below.** It is a deterministic key, so
   letting it decide the opening would replay one game per seed. By 18 the position
   has already branched widely enough that a deterministic choice cannot funnel every
   game into the same line.
 
-A table that cannot value *every* reply is refused wholesale, exactly as it is for
+A table that cannot value _every_ reply is refused wholesale, exactly as it is for
 the move choice itself (§"The opening table"): the pool is left unranked rather than
 ranked on partial data.
 
 **What this is worth.** Against the random player — a maximally fallible opponent, so
 its loss rate is a direct estimate of P(the opponent goes wrong) — ranking lifts the
-perfect player from **62.3%** wins to **98.0%**, measured over 300 games per policy
-(150 in each seat, with openings and the opponent's RNG seeded identically across
-policies). Read the other way round, it cuts the games it fails to win from 37.7% to
-2.0%, an eighteen-fold reduction; and it **never loses a game under any policy**, as
-it cannot. Both keys earn their place — the exact trap count does most of the work
-(62.3% → 93.3%) and the liveness heuristic supplies the rest (93.3% → 98.0%):
-
-| policy | won | drew | lost | win% |
-| --- | --- | --- | --- | --- |
-| `RANDOM` (unranked) | 187 | 113 | 0 | 62.3% |
-| `TRAPS` | 280 | 20 | 0 | 93.3% |
-| `FULL` | 294 | 6 | 0 | 98.0% |
-
-It is also *faster* — 912 s down to 318 s for the 150 Mouse-seat games — because won
-games end sooner and so reach fewer deep searches.
+perfect player from **62.3%** wins to **98.0%**, measured over 300 games per policy,
+and it **never loses a game under any policy**, as it cannot. Both keys earn their
+place: the exact trap count does most of the work and the liveness heuristic supplies
+the rest. The caveat on the numbers is that a random opponent misses traps uniformly
+whereas an LLM misses _subtle_ ones, so trap density is a proxy for that rather than a
+model of it, and the gain against a model will differ.
 
 Ranking is **not configurable**: the player always ranks. A selectable policy would
 make `perfect` mean two different strengths under one name, and a results file
@@ -1571,10 +1533,7 @@ identifies a player by name alone (§6) — so the yardstick would stop being ca
 (§1). The unranked baseline is instead reconstructed outside the player, by a
 throwaway subclass that restores the old pick;
 [`tools/bench_tie_break.py`](tools/bench_tie_break.py) does exactly that, and is how
-this comparison is re-run whenever the keys or their gates change. The caveat on the numbers is that a
-random opponent misses traps uniformly, whereas an LLM misses *subtle* ones; trap
-density is the best available proxy for that, not a model of it, so the gain against a
-model will differ.
+the comparison above is re-run whenever the keys or their gates change.
 
 ### Where the table comes from
 
@@ -1586,14 +1545,14 @@ seed classes, four solves cover all 25 seeds.
 That solver is a separate program with separate needs — it uses numpy and a process
 pool, neither of which the player itself has any use for — and it is specified in its
 own document, **[`tools/solver/SPEC.md`](tools/solver/SPEC.md)**, together with the table
-file format. Nothing in this section depends on *how* the table was produced, only on
+file format. Nothing in this section depends on _how_ the table was produced, only on
 what it contains.
 
 ### The opening table
 
 Choosing a move at a position with `E` empty cells means valuing its children, which
-have `E−2` — so the layers the table *stores* sit two below the layers at which the
-player *moves*. It stores values for **22, 20, 18 and 16** empty cells, which covers
+have `E−2` — so the layers the table _stores_ sit two below the layers at which the
+player _moves_. It stores values for **22, 20, 18 and 16** empty cells, which covers
 the player's choices at **24, 22, 20 and 18**. From **16** empty cells down it
 live-searches. (Layer 24 is deliberately absent: nothing ever chooses at 26.)
 
@@ -1606,7 +1565,7 @@ A table is selected by the seed's **orbit representative**, so all 25 seeds are 
 by the four files. No move ever needs mapping between frames: the canonical key is
 invariant under G and the table stores only **values**, so the player generates
 children on the real board, canonicalizes each, and looks its value up directly. The
-seed determines only *which* file to load.
+seed determines only _which_ file to load.
 
 The format is deliberately plain: it is read with `array` and searched with `bisect`,
 and may be gzipped (~6× smaller) — all standard library. That keeps the player free of
@@ -1621,7 +1580,7 @@ practical — so it remains usable and testable on a checkout that has not been 
 solver's output. That fallback is announced on stderr, naming the directory searched,
 the filename expected, and the consequence: silence would be indistinguishable from a
 hang, since searching the opening can take hours per move. A table that cannot answer
-for *every* child of the current position is likewise refused wholesale in favour of
+for _every_ child of the current position is likewise refused wholesale in favour of
 the search, so a partial or mismatched table degrades to slow-and-right rather than
 fast-and-wrong.
 
@@ -1635,14 +1594,14 @@ win.
 The opening is more strongly drawn than that summary suggests: **every position with
 20 or more empty cells is drawn**, whichever side is to move. The first forced wins
 appear at **18** empty cells, and even there they are a small minority — 4,075 of the
-64,440 positions in the C3 class. (Nothing can be *terminal* before 16 empty cells
+64,440 positions in the C3 class. (Nothing can be _terminal_ before 16 empty cells
 either: that is the first point at which a side holds five pieces, so the first at
 which a line can be completed at all.)
 
 Two consequences. **Every** first move by the Mouse, and every reply by the Snake, is
-equally optimal — all their children are drawn, so *against perfect defence* the
+equally optimal — all their children are drawn, so _against perfect defence_ the
 choice cannot matter, and a uniformly random pick among them is exactly as good as
-any other. And the earliest a choice *can* matter is the Mouse's second move, where a
+any other. And the earliest a choice _can_ matter is the Mouse's second move, where a
 minority of moves walk into one of those 18-empty wins for the Snake: 29,768 of
 417,240 for the C3 class (7.1%), concentrated in 318 of its 2,196 positions. A win
 only ever arrives as a gift, and the perfect player's opening task is purely not to
@@ -1655,12 +1614,12 @@ move — value-irrelevant though it is — decides whether the Mouse is offered 
 chance to go wrong or none whatever. It is the first ply at which ranking has any
 effect, and the effect is large: choosing the trappiest reply routinely leaves the
 Mouse with a large majority of losing moves to avoid, against a 7.1% base rate. The
-Mouse's *first* move remains the one place where nothing can be gained, since its
+Mouse's _first_ move remains the one place where nothing can be gained, since its
 grandchildren are all drawn too — which is why it is left uniformly random.
 
 This settles, for the algorithmic player, the game-balance question §11 lists as out
 of scope: neither side is favoured under perfect play. It says nothing about balance
-between *fallible* players, which is what the benchmark actually measures.
+between _fallible_ players, which is what the benchmark actually measures.
 
 ### Performance
 
@@ -1739,7 +1698,7 @@ progress toward that, not incidental churn.
   - **1.3** — the **algorithmic player** (§10) made practical rather than merely
     correct: the game solved offline for all four seed classes, and the opening
     table the player reads instead of searching.
-  - **1.4** — the algorithmic player made *dangerous* as well as perfect (§10,
+  - **1.4** — the algorithmic player made _dangerous_ as well as perfect (§10,
     "Choosing among optimal moves"): among equally optimal moves it now prefers
     those giving a fallible opponent the most ways to go wrong, cutting the games it
     fails to win against the random player from 37.7% to 2.0% — while still never
@@ -1755,15 +1714,15 @@ progress toward that, not incidental churn.
     reply is parsed as text, so no grammar touches generation. Built to test whether
     constrained decoding was costing play quality against the perfect player. It is
     not: prompted and native draw alike. The mode stays, as the answer to a question
-    that will otherwise be asked again. *(current)*
+    that will otherwise be asked again. _(current)_
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
 player is specified in full in §10.
 
-Out of scope until at least 1.0, and possibly beyond:
+Out of scope for now:
 
-- Game-balance analysis between *fallible* players (whether Snake or Mouse is
+- Game-balance analysis between _fallible_ players (whether Snake or Mouse is
   favored in practice, and how the seeded opening cell affects that, §2.4). Under
   **perfect** play the question is settled — every seed is a draw (§10).
 - Any GUI/TUI.
