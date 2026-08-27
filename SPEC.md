@@ -582,13 +582,15 @@ thread then grows until the provider rejects it. The fix is `native`, served wit
 [`tools/probe_tool_termination.py`](tools/probe_tool_termination.py) asks one endpoint
 for a move both ways and reports how each ended, which is how the mode is chosen.
 
-**The mode is not known to be play-neutral.** Measured against the perfect player, one
-model drew far more often and reasoned ~40% longer under a _post-hoc_ tool parser than
-under `native` or `prompted`, which play alike. The grammar is not the cause —
-`prompted` constrains nothing and still matches `native` — and no mechanism has been
-found. Treat a mode change as a possible benchmark change: do not pool results across
-one, and prefer `native` to `prompted` where both work, since only `native` guarantees
-parseable output.
+**The mode may not be play-neutral.** Measured against the perfect player, one model
+reasoned substantially longer under a _post-hoc_ tool parser on one machine — but the
+effect did not reproduce on a second running the same image, and no play difference
+reached significance at 39 games per arm. What did show up in every mode is that a
+long match degrades play: draw rates fall and fault rates climb after ~20 games,
+which is the larger effect and the one to control for. Treat a mode change as a
+possible benchmark change nonetheless: do not pool results across one, and prefer
+`native` to `prompted` where both work, since only `native` guarantees parseable
+output.
 
 **Responses are capped at a generous output-token budget** (16384, against Pydantic
 AI's 4096 default). On Anthropic that ceiling covers the thinking _and_ the answer
