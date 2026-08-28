@@ -582,13 +582,12 @@ thread then grows until the provider rejects it. The fix is `native`, served wit
 [`tools/probe_tool_termination.py`](tools/probe_tool_termination.py) asks one endpoint
 for a move both ways and reports how each ended, which is how the mode is chosen.
 
-**The mode may not be play-neutral.** Measured against the perfect player, one model
-reasoned substantially longer under a _post-hoc_ tool parser on one machine — but the
-effect did not reproduce on a second running the same image, and no play difference
-reached significance at 39 games per arm. What did show up in every mode is that a
-long match degrades play: draw rates fall and fault rates climb after ~20 games,
-which is the larger effect and the one to control for. Treat a mode change as a
-possible benchmark change nonetheless: do not pool results across one, and prefer
+**The mode may not be play-neutral.** One model reasoned substantially longer under a
+_post-hoc_ tool parser on one machine, though the effect did not reproduce on a second
+running the same image. Whether that changes how well it *plays* is unmeasured: the
+runs that would have answered it were tallied by a reader that misread two fault
+messages as draws, and their logs are gone. Treat a mode change as a possible benchmark
+change until someone measures it properly: do not pool results across one, and prefer
 `native` to `prompted` where both work, since only `native` guarantees parseable
 output.
 
@@ -873,6 +872,15 @@ later requests prune it (see "Pruning re-sent reasoning") — as JSON under `DIR
 
 This is purely an observation aid: it never changes what is sent to the model, and
 never affects how moves or faults are scored.
+
+Because the thread carries each game's outcome (see "The message thread"), a dump is
+also a record of how the match went, and
+[`tools/tally_log.py`](tools/tally_log.py) reads it back. It inverts the exact
+constants the player writes rather than matching hand-written substrings — the advice
+for two fault reasons mentions a cat's game, so a reader that tests for that first
+scores those faults as draws. It reports **one game fewer than the match played**,
+since the last game's outcome is only enqueued and never flushed; where the exact count
+matters, record the match with `--tournament-results` and use `tally-tournament` (§6).
 
 ### Probing a deployment
 
@@ -1248,9 +1256,10 @@ Rough module layout:
   (`cli_common`): `match_cli` (`play-match`), `matches_cli`
   (`play-tournament-matches`), and `tally_cli` (`tally-tournament`).
 - `tools/` — standalone programs outside the package, each specified where the thing
-  it measures is: the endpoint probes (§4, "Probing a deployment"), the tie-break
-  benchmark (§10, "Choosing among optimal moves"), and the offline solver, which has
-  its own document (`tools/solver/SPEC.md`). They import the package but nothing in
+  it measures is: the endpoint probes (§4, "Probing a deployment"), the message-log
+  reader (§4, "Message logging"), the tie-break benchmark (§10, "Choosing among
+  optimal moves"), and the offline solver, which has its own document
+  (`tools/solver/SPEC.md`). They import the package but nothing in
   the package imports them, so a tool may take dependencies the engine does not have.
 
 ## 9. Tech stack & tooling

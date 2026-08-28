@@ -65,7 +65,16 @@ from ..faults import (
 )
 from ..result import GameResult, PlayerFaultDetail, Termination
 from .base import Player
-from .prompts import FAULT_ADVICE, RULES_PREAMBLE
+from .prompts import (
+    FAULT_ADVICE,
+    GAME_ABORTED,
+    GAME_DRAWN,
+    GAME_LOST,
+    GAME_WON,
+    OPPONENT_FAULT_PREFIX,
+    OWN_FAULT_PREFIX,
+    RULES_PREAMBLE,
+)
 
 # Built-in providers, each with the environment variable holding its key (§4,
 # "Model selection"). Custom endpoints come from providers.yaml instead.
@@ -569,30 +578,19 @@ class LLMPlayer(Player):
         """
         assert self._side is not None
         if result.termination is Termination.LINE_COMPLETED:
-            if result.winner is self._side:
-                return "That game is over: you completed a line and won."
-            return "That game is over: your opponent completed a line and won."
+            return GAME_WON if result.winner is self._side else GAME_LOST
         if result.termination is Termination.CATS_GAME:
-            return (
-                "That game is over: every line is dead, so it was a cat's game "
-                "(a draw)."
-            )
+            return GAME_DRAWN
         if result.termination is Termination.ABORTED:
             # A no-contest: no fault advice, since nothing about the model's play
             # caused it.
-            return (
-                "That game was abandoned because of a technical problem reaching "
-                "you, not anything about your play — it does not count."
-            )
+            return GAME_ABORTED
 
         fault: PlayerFaultDetail | None = result.fault
         assert fault is not None
         advice: str = FAULT_ADVICE[fault.reason]
         if fault.offender is self._side:
-            detail: str = (
-                f"That game is over: you failed your turn, ending the game — "
-                f"{advice}"
-            )
+            detail: str = f"{OWN_FAULT_PREFIX}{advice}"
             if fault.reason is PlayerFaultReason.WRONG_OUTCOME_CLAIM:
                 detail += (
                     f" You claimed {fault.claimed_outcome.value} but it was "  # type: ignore[union-attr]
@@ -608,10 +606,7 @@ class LLMPlayer(Player):
             if fault.attempted_move is not None
             else ""
         )
-        return (
-            f"That game is over: your opponent failed their turn{move_note}, "
-            f"ending the game."
-        )
+        return f"{OPPONENT_FAULT_PREFIX}{move_note}, ending the game."
 
     def _write_log(self) -> None:
         """Overwrite this player's log file with the full thread so far (§4).

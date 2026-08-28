@@ -64,6 +64,24 @@ response while still reasoning."""
 
 # How to explain each fault back to the model, so the next game's opening can
 # tell it what it did wrong and how to avoid repeating it (§4, end_game).
+# How a finished game is described to the model, one constant per termination
+# (§3). They are exported rather than inlined because they are also the only
+# record of a game's outcome in a `--log-llm` dump, so a reader of that dump
+# (tools/tally_log.py) inverts these exact strings rather than guessing at the
+# prose. Change one and the reader follows; hand-written substrings would not.
+GAME_WON: str = "That game is over: you completed a line and won."
+GAME_LOST: str = "That game is over: your opponent completed a line and won."
+GAME_DRAWN: str = (
+    "That game is over: every line is dead, so it was a cat's game (a draw)."
+)
+GAME_ABORTED: str = (
+    "That game was abandoned because of a technical problem reaching you, not "
+    "anything about your play — it does not count."
+)
+# Prefixes: each is followed by the detail that varies per fault.
+OWN_FAULT_PREFIX: str = "That game is over: you failed your turn, ending the game — "
+OPPONENT_FAULT_PREFIX: str = "That game is over: your opponent failed their turn"
+
 FAULT_ADVICE: dict[PlayerFaultReason, str] = {
     PlayerFaultReason.OFF_BOARD: (
         "you named a cell that is off the board — cells range from A1 to E5 "
