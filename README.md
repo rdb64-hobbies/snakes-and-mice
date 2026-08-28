@@ -24,10 +24,13 @@ there. After all, if a model keeps attempting illegal or nonsensical moves, or
 if it can't play this game at the level of a 7-year-old, maybe it isn't the best
 choice for an agent.
 
-The full game rules and system design live in [`SPEC.md`](SPEC.md). The
-architecture allows for multiple player types, including a scripted bot player
-for testing, the random player, the perfect player, LLM players, and a human
-player. The design of the perfect player is especially interesting.
+The full game rules and system design live in [`SPEC.md`](SPEC.md), with the two
+substantial player types specified alongside it — the LLM player in
+[`SPEC-llm-player.md`](SPEC-llm-player.md) and the perfect player in
+[`SPEC-perfect-player.md`](SPEC-perfect-player.md). The architecture allows for
+multiple player types, including a scripted bot player for testing, the random
+player, the perfect player, LLM players, and a human player. The design of the
+perfect player is especially interesting.
 
 ## Getting it
 
@@ -141,7 +144,7 @@ uv run python tools/solver/dump_table.py perfect-tables/C3.table.gz
 
 The program that did the solving lives in [`tools/solver/`](tools/solver/) and
 has its own [specification](tools/solver/SPEC.md); the player itself is covered
-by [`SPEC.md`](SPEC.md) §10.
+by [`SPEC-perfect-player.md`](SPEC-perfect-player.md).
 
 ## Development
 

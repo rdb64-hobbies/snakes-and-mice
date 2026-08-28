@@ -2,8 +2,8 @@
 
 Specification for the programs in `tools/solver/` that solve Snakes and Mice and
 produce the opening table `PerfectPlayer` reads. The player itself is specified in
-[`../../SPEC.md`](../../SPEC.md) §10; this document covers only how the table is
-produced and what is in it.
+[`../../SPEC-perfect-player.md`](../../SPEC-perfect-player.md); this document covers
+only how the table is produced and what is in it.
 
 `NOTES.md` alongside this file is the *working record* — measurements, dead
 ends, and the reasoning behind the constants. This is the normative description.
@@ -30,19 +30,19 @@ tools/solver/
 Full-depth search is exact and, in the endgame, fast. In the opening it is hopeless:
 above ~16 empty cells the tree is far too wide to search per move. Since the game is
 small enough to solve outright, it is solved once, offline, and the upper plies are
-looked up at run time (§10, "The opening table").
+looked up at run time (`SPEC-perfect-player.md`, "The opening table").
 
 ## Scope: four seeds cover twenty-five
 
 Position values are invariant under the order-32 symmetry group **G** of the 12 winning
-lines (SPEC §10). Under G the 25 seed cells fall into **4 orbits**, represented by
-**C3, A1, A2 and A3**, so four solves cover every opening. C3 has a stabilizer of order
-32; the three A-class seeds have stabilizer 4 and are correspondingly larger to solve —
-about 3× C3 in practice.
+lines (`SPEC-perfect-player.md`). Under G the 25 seed cells fall into **4 orbits**,
+represented by **C3, A1, A2 and A3**, so four solves cover every opening. C3 has a
+stabilizer of order 32; the three A-class seeds have stabilizer 4 and are
+correspondingly larger to solve — about 3× C3 in practice.
 
 Every position is identified by its **canonical key**: the numerically smallest of its
 32 transformed forms, mouse and snake permuted together and packed into one `uint64`
-(SPEC §10, "Canonical position").
+(`SPEC-perfect-player.md`, "Canonical position").
 
 ## Constraints
 
@@ -129,8 +129,8 @@ For a position `P`, the value is the negamax maximum over its moves of
 
 with `WIN = 1000` and `depth` read off the position as `(occupied − 1) // 2`. The
 depth is that of the position the winning move is made **from** — this must match the
-live search exactly, since a game mixes values from both (SPEC §10, "Exact, depth-aware
-scoring").
+live search exactly, since a game mixes values from both (`SPEC-perfect-player.md`,
+"Exact, depth-aware scoring").
 
 Terminal children were dropped by the forward pass and so are re-detected here rather
 than looked up. Every **non-terminal** child is guaranteed to be present in the layer

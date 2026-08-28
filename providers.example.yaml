@@ -17,7 +17,7 @@
 #                constrains generation to a format the model never emits, and it
 #                then never stops. Diagnose with tools/probe_tool_termination.py.
 #                "prompted" constrains nothing, which can matter for play quality
-#                — see SPEC §4, "Structured output".
+#                — see SPEC-llm-player.md, "Structured output".
 providers:
   - name: my-ollama
     base_url: http://localhost:11434/v1
