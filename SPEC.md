@@ -586,7 +586,10 @@ for a move both ways and reports how each ended, which is how the mode is chosen
 _post-hoc_ tool parser on one machine, though the effect did not reproduce on a second
 running the same image. Whether that changes how well it *plays* is unmeasured: the
 runs that would have answered it were tallied by a reader that misread two fault
-messages as draws, and their logs are gone. Treat a mode change as a possible benchmark
+messages as draws, and their logs are gone. Read any such comparison against the
+variance in "Comparing two machines" below — a served model's reasoning length varies
+threefold between identical requests, so a difference of means across two runs is worth
+less than it looks. Treat a mode change as a possible benchmark
 change until someone measures it properly: do not pool results across one, and prefer
 `native` to `prompted` where both work, since only `native` guarantees parseable
 output.
@@ -912,6 +915,34 @@ nothing about a run.
 Re-run both whenever the container, the served model, or the serve flags change: the
 answers are properties of the deployment, not of this project, and a stale answer is
 worse than none.
+
+### Comparing two machines
+
+A tournament may be spread over more than one machine, which is sound only if a model
+plays the same on each. That is harder to establish than it looks, because **a served
+model is not reproducible even on one machine**: identical requests return different
+reasoning and different moves, since `temperature: 0` makes each step greedy without
+making the arithmetic reproducible — with CUDA graphs, chunked prefill and a
+mixture-of-experts model the reduction order varies, and tiny logit differences compound
+over thousands of reasoning tokens. Measured on one endpoint, eight identical requests
+gave five distinct moves and reasoning spanning 3,000 to 9,000 characters.
+
+Two consequences. Comparing single answers between machines is meaningless, and so is
+reading a difference in mean reasoning length between two runs — the variance within one
+machine swallows it. **Any claim that two deployments differ has to be measured against
+how much a deployment differs from itself.**
+
+[`tools/compare_endpoints.py`](tools/compare_endpoints.py) does that: it samples both
+endpoints on the same prompt and compares the resulting move distributions, taking each
+endpoint's own split-sample overlap as the noise floor. Cross- and self-overlap are both
+measured on half-samples, since smaller samples overlap less by construction and mixing
+the two sizes biases the answer. Its prompts come from driving a real `LLMPlayer` over a
+scripted game, so they are byte-identical to a match's.
+
+It answers "is there evidence these differ", not "are these the same": a modest
+difference stays invisible at any sample size a slow machine can afford. The cheaper
+course is to **assign each model to one machine for a whole tournament**, which removes
+the question rather than answering it.
 
 ### Deferred for now
 
@@ -1256,8 +1287,9 @@ Rough module layout:
   (`cli_common`): `match_cli` (`play-match`), `matches_cli`
   (`play-tournament-matches`), and `tally_cli` (`tally-tournament`).
 - `tools/` — standalone programs outside the package, each specified where the thing
-  it measures is: the endpoint probes (§4, "Probing a deployment"), the message-log
-  reader (§4, "Message logging"), the tie-break benchmark (§10, "Choosing among
+  it measures is: the endpoint probes (§4, "Probing a deployment"), the machine
+  comparison (§4, "Comparing two machines"), the message-log reader (§4, "Message
+  logging"), the tie-break benchmark (§10, "Choosing among
   optimal moves"), and the offline solver, which has its own document
   (`tools/solver/SPEC.md`). They import the package but nothing in
   the package imports them, so a tool may take dependencies the engine does not have.
