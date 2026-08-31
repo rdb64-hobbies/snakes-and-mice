@@ -790,15 +790,138 @@ tied)`** — the denominator being the games played with **neither** side faulti
 - **`fault%` = `faulted / played`** — here the denominator is games played
   (excl. aborted), since a fault _is_ a played game.
 
+**The results file stands alone.** The roster (`players.yaml`) is an input to
+*running* matches and never to reading them: it names who can be asked to play, and
+the matches it produces are recorded under plain names (§6, "The results file"). Once
+a line is written it is self-contained. The roster may afterwards be reordered,
+rewritten, or deleted outright and every tally still means exactly what it meant
+before — so `tally-tournament` reads the results file and **nothing else**. It loads
+no roster, no provider config, and no keys. This is what lets a results file outlive
+the configuration that produced it, and it is a property worth protecting: any future
+tally feature must be computable from the file alone.
+
 `--sort win%|loss%|fault%` (default `win%`) orders the standings **best-on-top**:
 `win%` descending, `loss%` and `fault%` ascending (fewest losses / fewest faults
-first). Ties keep **roster order** (`players.yaml`).
+first). A player whose ranking rate is undefined (`—`) sorts to the **end**, having
+nothing to rank on. Ties break by **name** — the one ordering the file itself
+determines, keeping the table fully deterministic without reaching outside it.
 
-The standings are deliberately **side-agnostic**: no Mouse-vs-Snake breakdown,
-because whether the opening favors a side — the default or any other seed
-(§2.4) — is game-balance analysis deferred until after 1.0 (§11). A head-to-head player-vs-player matrix is likewise a natural
-later addition the data already supports, but beyond the per-player standings
-specified here.
+**The fault breakdown.** Fault frequency is a headline metric (§1), and _which_ fault
+is the more telling half: a player that plays onto an occupied cell is failing
+differently from one that misreads its own win. So alongside the six counts each
+player's faults are also accumulated **by `PlayerFaultReason`** (§3), attributing every
+recorded fault to its `offender`. This needs nothing new from the results file, which
+already carries the full `GameResult` — fault detail included — for exactly the games
+that faulted (§5). Per player the reason counts sum to `faulted`, and are empty for a
+player that never faulted.
+
+`--faults` (off by default) appends that breakdown below the standings: one
+`name: reason ×n, …` line per player that faulted, reasons most-frequent-first, in the
+order the standings were ranked. Players with no faults are omitted; if nobody
+faulted, the section says so. It is off by default because `fault%` already answers
+_how often_ in the table itself; the breakdown is the follow-up question, and only
+some runs ask it.
+
+**Restricting the tally to some players.** The results file only ever grows (§6,
+"The results file"), so a tally over a long-lived file soon prints more players than
+the question at hand is about. Two options narrow it, each naming players explicitly:
+
+- `--players NAME…` — tally **only** the named players.
+- `--except NAME…` — tally every player in the file **except** the named ones.
+
+They are two spellings of one operation — name the players to keep, or name their
+complement — so they are **mutually exclusive**; giving both is an error rather than
+some intersection of the two. Given neither, every player in the file is tallied, as
+before.
+
+**The filter selects matches, not rows.** A player left out of the tally leaves no
+trace in it: the standings come out as though the matches that player played had never
+been run. So the filter applies to the **match set** first — a match is counted only
+when **both** its players are selected — and the standings are then accumulated from
+the surviving matches by the rules above, unchanged. Dropping a player therefore also
+withdraws its games from every opponent's record: `--except X` does not merely hide X's
+row, it takes back the wins, losses, ties, faults and games-played that X contributed
+to everyone else. What remains is a smaller but self-consistent tournament — the
+matches played **among** the selected players — and its every count and rate reconciles
+exactly as it does for the whole file.
+
+Two consequences follow from requiring *both* players, and both are correct rather than
+surprising:
+
+- **`--players` with a single name tallies nothing.** No match has the same player on
+  both sides (self-play is excluded, §6, "The one generating operation"), so no match
+  survives. A record exists only relative to opponents; naming no opponent selects no
+  games.
+- **A selected player can still be absent from the table.** If every match it played
+  was against someone the filter dropped, it has no surviving games and so gets no
+  row — rather than a row of zeros, which would assert it played and did nothing.
+
+**Names are checked against the results file, not the roster.** The file is the
+population being tallied and the only authority on which names it holds; an unknown
+name is an error naming the names actually present, so a typo fails loudly instead of
+quietly tallying nothing. This is also why the subset **selectors** of
+`play-tournament-matches` (`all`, `same`, `above <name>`, `below <name>` — §6, "Running
+matches") are **not** reused here: they are defined over `players.yaml`, whereas the
+names in a results file need not be in the roster at all. The perfect player never is
+(§10), and because the file is append-only while the roster is edited freely, a file
+outlives the roster entries that produced it — names stay in the file that no longer
+name anything. Reusing the selectors would also drag the roster into a command that
+reads none (above). The flag name `--players` is shared with the runner on purpose — it
+selects a player subset in both — but here its grammar is a plain list of names,
+nothing more.
+
+Filtering changes which matches are counted and nothing else about how. The order of
+the names given does not matter: the standings are ordered by `--sort` as always, ties
+still breaking by name, and `--faults` breaks down the surviving players' faults from
+the surviving matches. When the filter leaves no matches at all, the output says so in
+terms **distinct** from an empty results file — the operator should not have to guess
+which of the two happened.
+
+**The head-to-head matrix.** The standings say how often a player won; they do not
+say *whom* it beat. `--head-to-head` (off by default) adds an **n × n matrix** over the
+same n players, whose cell at row **A**, column **B** is the number of games **A lost
+to B** — equivalently, the games B won from A. Read it either way round: **summing a
+row gives that player's total losses, summing a column gives its total wins.**
+
+That is not a coincidence but the matrix's defining property: it is a **decomposition
+of two standings columns by opponent**. Row sum of A equals A's `lost`; column sum of A
+equals A's `won`. The two views cannot disagree, which makes the matrix cheap to trust
+and cheap to test.
+
+- **Wins and losses only.** Cat's games, faults, aborts and the fault reasons play no
+  part. A fault is neither a win nor a loss for either side (§3), so it has nothing to
+  contribute to a cell; `--faults` is where that story is told. A cell therefore counts
+  `LINE_COMPLETED` games alone, and a pairing may have played many games and still show
+  `0` both ways.
+- **No diagonal.** No match has a player on both sides (self-play is excluded, §6, "The
+  one generating operation"), so the diagonal has no entries at all — not zeroes.
+- **Side-agnostic, like the standings.** A pairing's two seatings fold into the same
+  pair of cells; who was Mouse is not recorded here (see the paragraph below).
+
+It needs nothing new from the results file. Each line already carries `mouse_wins` and
+`snake_wins` for a *fixed* pair of players (§5), which is precisely one pairing's cell
+contributions: `mouse_wins` are losses charged to the snake-side player, `snake_wins`
+losses charged to the mouse-side one. Several lines for the same pairing accumulate.
+
+**The matrix follows the standings.** Its players are the standings' players, in the
+standings' order — so `--sort` ranks its rows and columns, and the `--players` /
+`--except` filters (above) narrow it exactly as they narrow the table, the matrix being
+built from the same surviving matches. With fewer than two players there is nothing to
+cross-tabulate and it is omitted.
+
+Two rendering rules earn their keep on real data, where a roster of long names is
+mostly pairings that never happened:
+
+- **Columns are numbered, not named.** Each row is labeled with its rank and name
+  (`7. nemotron-3-nano-rtx`); the columns carry only the matching rank number. Player
+  names are far too wide to head n columns, and the rank is already the row's identity.
+- **A pairing that never met shows `·`, not `0`.** `0` is a real and interesting
+  result — these two played and this one never lost — and must not be confused with
+  the absence of any games. The diagonal, being neither, shows `—`.
+
+The standings are deliberately **side-agnostic**: no Mouse-vs-Snake breakdown, in the
+matrix or the table, because whether the opening favors a side — the default or any
+other seed (§2.4) — is game-balance analysis deferred until after 1.0 (§11).
 
 ## 7. Interface
 
@@ -840,8 +963,23 @@ rejected. E.g. `play-tournament-matches` runs a full round-robin, and
 against the whole roster.
 
 **`tally-tournament`** — read a results file and print per-player standings (§6).
-`--tournament-results [FILE]` selects the file (default `tournament-results.jsonl`)
-and `--sort win%|loss%|fault%` (default `win%`) orders the table.
+`--tournament-results [FILE]` selects the file (default `tournament-results.jsonl`) and
+`--sort win%|loss%|fault%` (default `win%`) orders the table. Three flags, all off by
+default, add to or narrow that table:
+
+- `--faults` appends the per-player breakdown of fault reasons (§6).
+- `--head-to-head` appends the n × n matrix of who beat whom — cell `(A, B)` counts
+  A's losses to B, so rows sum to losses and columns to wins (§6).
+- `--players NAME…` tallies only the matches played among the named players, and
+  `--except NAME…` only those played among everyone else. The two are mutually
+  exclusive; names must appear in the results file, and either way a filtered-out
+  player's matches are dropped whole, as if never run (§6).
+
+Alone among the three commands it runs no games and reads no configuration at all — no
+roster, no providers, no keys — working from the results file alone (§6). E.g.
+`tally-tournament --except nemotron-3-nano-rtx` re-scores the tournament as though that
+model had never been entered, and `tally-tournament --players Percy qwen-3-8
+--head-to-head` reduces it to that one pairing and shows how its two matches went.
 
 ## 8. Architecture
 
@@ -862,7 +1000,9 @@ Rough module layout:
   roster order → the ordered `(mouse, snake)` name pairs), `serialize`
   (reading/writing the JSON-Lines **results file** — the documented, round-tripping
   `MatchResult` encoding, kept out of `result` so those types stay pure data), and
-  `tally` (aggregating results into per-player standings and ordering them).
+  `tally` (selecting which matches count, aggregating those into per-player standings
+  and the head-to-head matrix, and ordering them — from the results alone, taking no
+  roster).
   Together with `match` and `game` these form the "engine" that drives play.
 - `players` — the player interface and its implementations (scripted, random,
   human, and — per §4 — the LLM player). Loading the LLM roster from
@@ -873,10 +1013,12 @@ Rough module layout:
   knowledge out of the roster loader.
 - `console` — the shared presentation layer: board rendering, result summaries,
   and the stdout `Observer`.
-- **CLI frontends** — one thin module per command (§7), sharing player
-  construction, roster loading, and `--watch` handling via a common helper
-  (`cli_common`): `match_cli` (`play-match`), `matches_cli`
-  (`play-tournament-matches`), and `tally_cli` (`tally-tournament`).
+- **CLI frontends** — one thin module per command (§7): `match_cli` (`play-match`),
+  `matches_cli` (`play-tournament-matches`), and `tally_cli` (`tally-tournament`). The
+  two **runners** share player construction, roster loading, and `--watch` handling via
+  a common helper (`cli_common`); `tally_cli` runs no games and loads no roster (§6,
+  "The results file stands alone"), taking from that helper only the shared
+  results-file default.
 - `tools/` — standalone programs outside the package, each specified where the thing
   it measures is: the endpoint probes (§4, "Probing a deployment"), the machine
   comparison (§4, "Comparing two machines"), the message-log reader (§4, "Message
