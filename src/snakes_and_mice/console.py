@@ -17,7 +17,7 @@ from .core import BOARD_SIZE, Cell, Move, Side, TurnOutcome
 from .faults import PlayerFaultReason
 from .observer import ObservationLevel, Observer
 from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
-from .tally import PlayerStanding, StandingsSort
+from .tally import HeadToHead, PlayerStanding, StandingsSort
 
 # The piece glyphs are emoji, which occupy TWO display columns in a terminal.
 # Every rendered cell is therefore normalized to a two-column token so the board
@@ -169,7 +169,7 @@ def _percent(rate: float | None) -> str:
 
 
 def render_standings(
-    standings: Sequence[PlayerStanding], sort: StandingsSort
+    standings: Sequence[PlayerStanding], sort: StandingsSort, *, filtered: bool = False
 ) -> str:
     """Render per-player standings (§6) as an aligned text table.
 
@@ -177,9 +177,17 @@ def render_standings(
     :func:`~snakes_and_mice.tally.sort_standings`); ``sort`` only labels the header
     so the reader knows which column ordered the table. The name column is
     left-aligned, every count and rate column right-aligned.
+
+    ``filtered`` says whether a player filter was applied (§6), which is what
+    distinguishes an empty table left by the filter from an empty results file —
+    the operator should not have to guess which of the two happened.
     """
     if not standings:
-        return "No matches recorded yet."
+        return (
+            "No matches among the selected players."
+            if filtered
+            else "No matches recorded yet."
+        )
 
     rows: list[list[str]] = []
     for standing in standings:
@@ -231,22 +239,59 @@ def render_fault_tally(standings: Sequence[PlayerStanding]) -> str:
     return "\n".join(lines)
 
 
+def render_head_to_head(matrix: HeadToHead) -> str:
+    """Render the head-to-head matrix (§6) as an aligned text table.
+
+    Rows are labeled ``rank. name``; the columns carry the matching rank number
+    alone, names being far too wide to head n of them. A cell is the row player's
+    losses to the column player, ``·`` where the two never met, ``—`` on the
+    diagonal.
+    """
+    names: tuple[str, ...] = matrix.names
+    if len(names) < 2:
+        return "Not enough players to cross-tabulate."
+
+    ranks: list[str] = [str(i) for i in range(1, len(names) + 1)]
+    labels: list[str] = [f"{rank}. {name}" for rank, name in zip(ranks, names)]
+    rows: list[list[str]] = []
+    for row_name in names:
+        cells: list[str] = []
+        for column_name in names:
+            if row_name == column_name:
+                cells.append("—")
+                continue
+            losses: int | None = matrix.cell(row_name, column_name)
+            cells.append("·" if losses is None else str(losses))
+        rows.append(cells)
+
+    label_width: int = max(len(label) for label in labels)
+    widths: list[int] = [
+        max(len(ranks[i]), *(len(row[i]) for row in rows)) for i in range(len(names))
+    ]
+
+    def format_row(label: str, cells: Sequence[str]) -> str:
+        padded: list[str] = [cells[i].rjust(widths[i]) for i in range(len(cells))]
+        return f"{label.ljust(label_width)}  " + "  ".join(padded)
+
+    lines: list[str] = [
+        "Head-to-head — each cell is the row player's losses to the column player,",
+        "so rows sum to losses and columns to wins. · = never met, — = self.",
+        "",
+        format_row("", ranks),
+        *(format_row(label, row) for label, row in zip(labels, rows)),
+    ]
+    return "\n".join(lines)
+
+
 class ConsoleObserver(Observer):
     """Renders a match to stdout, showing as much as its level asks for.
 
     The engine fires every hook; this observer gates its own output against the
     :class:`~snakes_and_mice.observer.ObservationLevel` it was built with —
-    ``move`` shows every turn, ``game`` just each game's board and result, and
-    ``match`` only the opening banner and the closing tally. The two coarser
-    levels show progress on a single line that is rewritten in place as play
-    advances (a carriage return plus an erase-to-end-of-line) and finally
-    overwritten by what comes next: ``game`` shows the turn now in play, replaced
-    by the game result; ``match`` shows the game now in play alongside a running
-    scoreboard and the previous game's outcome, replaced by the final tally. The
-    game and turn counters advance as the match runs, so any line that renders
-    them shows the right number. It never pauses:
-    with a human player, that player's own input paces the game; otherwise play
-    runs straight through.
+    ``move`` shows every turn, ``game`` each game's board and result, ``match``
+    only the opening banner and the closing tally. The two coarser levels keep
+    their progress on one line, rewritten in place as play advances and finally
+    overwritten by what comes next. It never pauses.
     """
 
     def __init__(self, level: ObservationLevel = ObservationLevel.MOVE) -> None:

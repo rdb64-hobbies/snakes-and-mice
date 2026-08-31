@@ -1,11 +1,14 @@
 """Tallying tournament results into per-player standings (§6).
 
-A **tournament** is simply *any set of matches* (§6). This module aggregates a bag
-of :class:`~snakes_and_mice.result.MatchResult`\\s — however they were produced —
-into per-player :class:`PlayerStanding`\\s and orders them for display.
+A **tournament** is simply *any set of matches* (§6). This module selects which
+of a bag of :class:`~snakes_and_mice.result.MatchResult`\\s count
+(:func:`select_matches`), aggregates those into per-player
+:class:`PlayerStanding`\\s (:func:`tally`) and the :class:`HeadToHead` matrix, and
+orders the standings for display (:func:`sort_standings`).
 
-Nothing here imports the CLI, Pydantic AI, or the roster loader: the logic stays
-light and unit-testable, taking the roster only as an ordered list of names.
+Nothing here imports the CLI, Pydantic AI, or the roster loader — and, unlike the
+rest of the package, nothing here takes a roster at all (§6, "The results file
+stands alone"), which is why ranking ties break by name.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .core import Side
-from .faults import PlayerFaultReason
+from .faults import PlayerFaultReason, TournamentError
 from .result import MatchResult
 
 
@@ -75,6 +78,63 @@ class _Accumulator:
     fault_reasons: Counter[PlayerFaultReason] = field(default_factory=Counter)
 
 
+def names_in(results: Iterable[MatchResult]) -> set[str]:
+    """Every player name appearing in ``results``, on either side."""
+    return {name for result in results for name in result.names.values()}
+
+
+def select_matches(
+    results: Sequence[MatchResult],
+    *,
+    players: Sequence[str] | None = None,
+    excluded: Sequence[str] | None = None,
+) -> list[MatchResult]:
+    """Keep only the matches played **among** a selected set of players (§6).
+
+    ``players`` names the players to keep, ``excluded`` their complement; the two
+    are mutually exclusive (passing both is a :class:`ValueError`) and passing
+    neither keeps every match. A match survives only when *both* its players are
+    selected, so dropping a player also withdraws the games it contributed to
+    every opponent's record.
+
+    Names are checked against ``results``, not against any roster: an unknown one
+    raises :class:`~snakes_and_mice.faults.TournamentError` naming the names
+    present.
+    """
+    if players is not None and excluded is not None:
+        raise ValueError("select_matches takes 'players' or 'excluded', not both")
+    if players is None and excluded is None:
+        return list(results)
+
+    present: set[str] = names_in(results)
+    if players is not None:
+        _check_names(players, present)
+        selected: set[str] = set(players)
+    else:
+        assert excluded is not None  # exactly one of the two is set, checked above
+        _check_names(excluded, present)
+        selected = present - set(excluded)
+
+    return [
+        result for result in results if selected.issuperset(result.names.values())
+    ]
+
+
+def _check_names(named: Sequence[str], present: set[str]) -> None:
+    """Raise unless every name in ``named`` appears in the results (§6)."""
+    unknown: list[str] = sorted({name for name in named if name not in present})
+    if not unknown:
+        return
+    listing: str = (
+        ", ".join(sorted(present)) if present else "(none — the file has no matches)"
+    )
+    raise TournamentError(
+        f"unknown player {'names' if len(unknown) > 1 else 'name'} "
+        f"{', '.join(repr(name) for name in unknown)}; "
+        f"the results file names: {listing}"
+    )
+
+
 def tally(results: Iterable[MatchResult]) -> list[PlayerStanding]:
     """Aggregate a bag of :class:`MatchResult`\\s into per-player standings.
 
@@ -127,6 +187,59 @@ def tally(results: Iterable[MatchResult]) -> list[PlayerStanding]:
     ]
 
 
+@dataclass(frozen=True)
+class HeadToHead:
+    """Who beat whom, as an n × n table of losses (§6).
+
+    The cell at row ``A``, column ``B`` counts the games **A lost to B**, so row
+    sums are that player's losses and column sums its wins. Wins and losses only:
+    cat's games, faults and aborts play no part, and a pairing may have met many
+    times and still show ``0`` both ways — which is why :meth:`cell` returns ``0``
+    for that and ``None`` for a pairing that never met.
+    """
+
+    names: tuple[str, ...]  # row/column order, as ranked by the standings
+    # (row, column) -> games the row player lost to the column player. Both
+    # directions are present for every pairing that met, and only for those, so
+    # the diagonal is absent entirely.
+    losses: Mapping[tuple[str, str], int]
+
+    def cell(self, row: str, column: str) -> int | None:
+        """Games ``row`` lost to ``column``, or ``None`` if the two never met."""
+        return self.losses.get((row, column))
+
+    def met(self, row: str, column: str) -> bool:
+        """Whether these two played any match at all (aborts and faults included)."""
+        return (row, column) in self.losses
+
+
+def head_to_head(
+    results: Iterable[MatchResult], order: Sequence[str]
+) -> HeadToHead:
+    """Cross-tabulate ``results`` into a :class:`HeadToHead` over ``order`` (§6).
+
+    ``order`` is the ranked standings' names, which become the matrix's rows and
+    columns; matches involving anyone outside it are skipped. A match's
+    ``mouse_wins`` are losses charged to its snake-side player and its
+    ``snake_wins`` losses charged to its mouse-side one, so several lines for one
+    pairing accumulate and its two seatings fold into the same pair of cells.
+    """
+    ranked: set[str] = set(order)
+    losses: dict[tuple[str, str], int] = {}
+    for result in results:
+        mouse: str = result.names[Side.MOUSE]
+        snake: str = result.names[Side.SNAKE]
+        if mouse == snake or mouse not in ranked or snake not in ranked:
+            continue
+        # Seed both directions so a pairing that met is distinguishable from one
+        # that never did, even when neither side won a game.
+        losses.setdefault((mouse, snake), 0)
+        losses.setdefault((snake, mouse), 0)
+        losses[(mouse, snake)] += result.snake_wins  # the mouse-side player's losses
+        losses[(snake, mouse)] += result.mouse_wins  # the snake-side player's losses
+    return HeadToHead(names=tuple(order), losses=losses)
+
+
 class StandingsSort(Enum):
     """Which rate ranks the standings. All sort **best-on-top**."""
 
@@ -138,18 +251,15 @@ class StandingsSort(Enum):
 def sort_standings(
     standings: Sequence[PlayerStanding],
     sort: StandingsSort,
-    roster_order: Sequence[str],
 ) -> list[PlayerStanding]:
     """Order ``standings`` best-on-top by the chosen rate (§6).
 
     ``win_rate`` descends; ``loss_rate`` and ``fault_rate`` ascend (fewest first).
-    A player with an undefined rate (no clean/played games) sorts to the end. Ties
-    break by ``roster_order``, then name — so the order is fully deterministic.
+    A player with an undefined rate (no clean/played games) sorts to the end.
+    Ties break by **name**, the only order available without a roster (§6).
     """
-    index: dict[str, int] = {name: i for i, name in enumerate(roster_order)}
-    tail: int = len(roster_order)
 
-    def sort_key(standing: PlayerStanding) -> tuple[bool, float, int, str]:
+    def sort_key(standing: PlayerStanding) -> tuple[bool, float, str]:
         if sort is StandingsSort.WIN:
             rate: float | None = standing.win_rate
             primary: float = -(rate or 0.0)  # descending
@@ -159,6 +269,6 @@ def sort_standings(
         else:
             rate = standing.fault_rate
             primary = rate or 0.0  # ascending
-        return (rate is None, primary, index.get(standing.name, tail), standing.name)
+        return (rate is None, primary, standing.name)
 
     return sorted(standings, key=sort_key)

@@ -108,6 +108,29 @@ uv run play-tournament-matches
 uv run tally-tournament
 ```
 
+The standings say how often each player won, lost, drew and faulted. Three
+options say more:
+
+```sh
+# Which faults each player actually committed
+uv run tally-tournament --faults
+
+# Who beat whom, as a matrix: rows sum to losses, columns to wins
+uv run tally-tournament --head-to-head
+
+# Narrow it to a few players — or re-score without one
+uv run tally-tournament --players opus gpt5
+uv run tally-tournament --except Randy
+```
+
+Narrowing drops a player's games along with the player, so what is left reads as
+though it had never entered — `--except` takes back the wins it handed everyone
+else, rather than just hiding its row.
+
+The results file stands on its own: `tally-tournament` reads it and nothing else,
+no roster and no keys, so a file keeps its meaning long after the `players.yaml`
+that produced it has moved on.
+
 ## The solved game
 
 Snakes and Mice is small enough to work out completely, and we did. Every game

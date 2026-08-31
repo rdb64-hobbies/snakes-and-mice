@@ -22,6 +22,7 @@ from snakes_and_mice.console import (
     describe_game_result,
     describe_match_result,
     render_fault_tally,
+    render_head_to_head,
     render_standings,
 )
 from snakes_and_mice.board import Board
@@ -33,7 +34,7 @@ from snakes_and_mice.result import (
     PlayerFaultDetail,
     Termination,
 )
-from snakes_and_mice.tally import PlayerStanding, StandingsSort
+from snakes_and_mice.tally import HeadToHead, PlayerStanding, StandingsSort
 
 
 def _mouse_wins_row_a() -> tuple[ScriptedPlayer, ScriptedPlayer]:
@@ -232,6 +233,13 @@ def test_render_standings_empty_is_a_plain_message() -> None:
     assert render_standings([], StandingsSort.WIN) == "No matches recorded yet."
 
 
+def test_render_standings_empty_after_filtering_reads_differently() -> None:
+    # The operator should not have to guess which of the two happened (§6).
+    assert render_standings([], StandingsSort.WIN, filtered=True) == (
+        "No matches among the selected players."
+    )
+
+
 def test_render_fault_tally_lists_faulty_players_in_the_match_format() -> None:
     standings: list[PlayerStanding] = [
         PlayerStanding("clean", played=4, won=2, lost=2, tied=0,
@@ -298,3 +306,46 @@ def test_single_game_omits_match_scaffolding(
     assert "Match:" not in out
     assert "Match complete" not in out
     assert "(mouse) wins." in out
+
+
+def _matrix(losses: dict[tuple[str, str], int], *names: str) -> HeadToHead:
+    return HeadToHead(names=tuple(names), losses=losses)
+
+
+def test_render_head_to_head_numbers_its_columns_and_labels_its_rows() -> None:
+    # a lost 4 to c and 0 to b; b lost 3 to a; b and c never met.
+    matrix: HeadToHead = _matrix(
+        {("a", "c"): 4, ("c", "a"): 0, ("a", "b"): 0, ("b", "a"): 3},
+        "c", "a", "b",
+    )
+    rows: list[str] = render_head_to_head(matrix).splitlines()[3:]
+
+    # The column header carries only the rank numbers — names are far too wide.
+    assert rows[0].split() == ["1", "2", "3"]
+    assert rows[1].split() == ["1.", "c", "—", "0", "·"]
+    assert rows[2].split() == ["2.", "a", "4", "—", "0"]
+    assert rows[3].split() == ["3.", "b", "·", "3", "—"]
+
+
+def test_render_head_to_head_distinguishes_a_goalless_pairing_from_no_games() -> None:
+    # a and b played and neither lost (0); a and c never met (·).
+    matrix: HeadToHead = _matrix(
+        {("a", "b"): 0, ("b", "a"): 0}, "a", "b", "c"
+    )
+    rows: list[str] = render_head_to_head(matrix).splitlines()[4:]
+    assert rows[0].split() == ["1.", "a", "—", "0", "·"]
+
+
+def test_render_head_to_head_needs_two_players() -> None:
+    assert render_head_to_head(_matrix({}, "solo")) == (
+        "Not enough players to cross-tabulate."
+    )
+
+
+def test_render_head_to_head_columns_are_wide_enough_for_their_counts() -> None:
+    matrix: HeadToHead = _matrix({("a", "b"): 100, ("b", "a"): 0}, "a", "b")
+    rows: list[str] = render_head_to_head(matrix).splitlines()[3:]
+    # Every row's cells line up under the numbered headers.
+    positions: list[int] = [rows[0].index("1"), rows[0].index("2")]
+    assert rows[1].index("100") + len("100") - 1 == positions[1]
+    assert rows[2].index("0") == positions[0]
