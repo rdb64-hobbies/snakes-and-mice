@@ -13,6 +13,7 @@ their work touches. Section numbers are stable and never reused.
 | **`SPEC.md`** (this file) | The game and rules (§2), the `Player` abstraction (§3), matches (§5), tournaments (§6), the CLI (§7), architecture (§8), tooling (§9), versioning and scope (§11). |
 | [`SPEC-llm-player.md`](SPEC-llm-player.md) | The **LLM player** in full: Pydantic AI, structured output, the message thread, reasoning pruning, model/provider selection, thinking levels, message logging, endpoint probes. Summarized in §4. |
 | [`SPEC-perfect-player.md`](SPEC-perfect-player.md) | The **algorithmic (perfect) player** in full: alpha–beta search, depth-aware scoring, the 32-element symmetry group and transposition table, the tie-break, the opening table, the solved result. Summarized in §10. |
+| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, and the investigation underway into whether LLM mistakes are exploitable. Summarized in §3, "Player types". |
 | [`tools/solver/SPEC.md`](tools/solver/SPEC.md) | The **offline solver** that produces the perfect player's opening table, and the table file format. |
 
 §4 and §10 remain in this document as summaries: each states the contract the rest of
@@ -500,7 +501,7 @@ implementation order (the first four are implemented — see the milestones in �
    table keyed on a symmetry-canonical board. Specified in full in §10.
 6. **Reinforcement-learning player** _(planned)_. A policy trained via RL (self-play). Likely
    needs supporting tooling (training loop, model persistence) beyond the game
-   engine itself.
+   engine itself. Full specification: [`SPEC-rl-player.md`](SPEC-rl-player.md).
 
 Others may be added as the project evolves.
 
