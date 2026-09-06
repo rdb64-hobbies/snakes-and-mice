@@ -663,6 +663,49 @@ only thing that ever waits for input is a human player taking its own turn. Beca
 a human must see the board to play, **if either player is human the CLI builds the
 observer at `MOVE`** (a coarser request is overridden, with a message).
 
+### Flagging mistakes (planned)
+
+Observation level (above) controls how much of *ordinary* play is shown; flagging
+mistakes is an orthogonal concern layered on top of any level, for a different
+purpose — surfacing when a player's move was **wrong**, not just what it was.
+
+Because the game is fully solved (§10), "wrong" needs no judgement call: every
+reachable position has an exact value under perfect play, computed by the same
+two-tier evaluation (opening table, then live search) `PerfectPlayer` uses to pick
+its own moves — exposed standalone as `evaluate(board, side)`. A **mistake** is any
+legal, accepted move whose resulting value (from the mover's own perspective) is
+worse than the value available before it. This is unrelated to a
+`PlayerFaultReason` fault (§3): a mistake never ends the game, is never illegal, and
+touches neither `GameResult` nor `MatchResult` — it is a purely observational
+annotation on a match that plays out exactly as it otherwise would.
+
+A mistake is **hard** if it crosses a win/draw/loss boundary (a drawn position
+played into a loss, a won one played into a draw or a loss) and **soft** if it
+stays within the same class but settles for a worse depth (a slower win, a faster
+loss). Only hard mistakes are surfaced: a "wrong" move in the depth-only sense is
+otherwise routine near the end of a mostly-drawn game, and flagging every one would
+bury the point of flagging anything — calling out something worth a human's
+attention.
+
+**Which side(s) are graded is decided by the caller, not the observer.** The
+observer takes an explicit set of `Side`s to watch and knows nothing about player
+kinds; the CLI derives that set from which side(s) are LLM roster names, the same
+discrimination `cli_common.make_player` already makes to build them (§8). Grading
+a mechanical player would produce no signal worth watching either way: `perfect`
+never qualifies (it is the ground truth being measured against, so it can never
+produce a lower value than the position already held), and `random` would qualify
+on nearly every non-trivial turn (it has no way to avoid one), so a constant stream
+of notifications would mean as little as none at all. Grading is not, however,
+limited to LLM-vs-mechanical play — an LLM-vs-LLM match can have both sides graded
+at once, which is exactly the case a fault tally alone is silent on (§1's "how
+often it faults" says nothing about legal-but-suboptimal play).
+
+A new flag, `--flag-mistakes` (off by default, orthogonal to `--watch`), will
+expose this on both `play-match` and `play-tournament-matches` (§7) once
+implemented. Like `PerfectPlayer` itself, it depends on the seed's opening table
+(§10) for the opening plies; a missing table degrades it the same way — correct,
+but potentially very slow, rather than silently wrong.
+
 ## 6. Tournaments
 
 A **tournament** is simply a **set of matches** — _any_ set, with no structural
@@ -1064,6 +1107,10 @@ What the rest of this document relies on:
   endgame is searched live. Both tiers return the same values, so the seam is
   invisible. A missing table is not an error — the player falls back to searching the
   opening, correct but far too slow to be practical, and says so on stderr.
+- That two-tier evaluation is also exposed standalone, as `evaluate(board, side)` —
+  not only used internally to pick this player's own move. It is the primitive §5's
+  planned mistake-flagging builds on, to grade *any* player's actual move against
+  ground truth.
 - Among equally optimal moves it **ranks for trappiness** rather than picking blindly,
   which is what makes it dangerous to a fallible opponent without ever risking the
   draw. This is not configurable.
