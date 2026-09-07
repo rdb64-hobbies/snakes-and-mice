@@ -15,13 +15,14 @@ import random
 from pathlib import Path
 
 from .cli_common import (
+    BUILTIN_KINDS,
     DEFAULT_LOG_DIR,
     DEFAULT_RESULTS_PATH,
     add_mistake_arguments,
     add_prune_thinking_argument,
     add_seed_argument,
     add_watch_argument,
-    llm_sides,
+    gradable_sides,
     make_observer,
     make_player,
     parse_seed,
@@ -108,8 +109,10 @@ def main(argv: list[str] | None = None) -> None:
         Path(args.mistakes_file) if args.mistakes_file is not None else None
     )
     kinds: dict[Side, str] = {Side.MOUSE: args.mouse, Side.SNAKE: args.snake}
-    llm: frozenset[Side] = llm_sides(kinds)
-    needs_roster: bool = bool(llm)
+    # Two separate questions of the same two kinds: who has to be looked up in
+    # the roster to be built at all, and whose moves are worth grading (§5).
+    needs_roster: bool = any(kind not in BUILTIN_KINDS for kind in kinds.values())
+    gradable: frozenset[Side] = gradable_sides(kinds)
 
     roster: Roster | None = None
     try:
@@ -134,14 +137,14 @@ def main(argv: list[str] | None = None) -> None:
         print("(a human is playing — showing every move)\n")
         watch = "move"
     wants_mistakes: bool = args.flag_mistakes or mistakes_path is not None
-    if wants_mistakes and not llm:
+    if wants_mistakes and not gradable:
         # Nothing to grade: `perfect` never errs and `random` always does (§5).
-        print("(no LLM is playing — nothing to flag mistakes for)\n")
+        print("(neither player is gradable — nothing to flag mistakes for)\n")
     try:
         result: MatchResult = play_match(
             mouse, snake, args.games,
             make_observer(
-                watch, mistake_sides=llm, mistakes_path=mistakes_path,
+                watch, mistake_sides=gradable, mistakes_path=mistakes_path,
                 flag_mistakes=args.flag_mistakes,
             ),
             opening,

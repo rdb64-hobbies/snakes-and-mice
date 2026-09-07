@@ -28,8 +28,24 @@ SEED_DEFAULT: str = "random"
 BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random", "perfect"})
 """The player kinds that are *not* roster names — anything else names an LLM.
 
-One definition, used both to build a player and to decide which sides are worth
-grading for mistakes (§5), so the two can never disagree about what an LLM is.
+This answers one question only: how to build the player, and hence whether the
+roster has to be loaded at all. Which sides are worth *grading* is a separate
+question with its own answer, :data:`NON_GRADABLE_KINDS`.
+"""
+
+NON_GRADABLE_KINDS: frozenset[str] = frozenset({"human", "random", "perfect"})
+"""The player kinds mistake-flagging has nothing to say about (§5).
+
+Two of these fail in opposite directions: ``perfect`` can never register a
+mistake, being the ground truth every move is graded against, while ``random``
+would register one on nearly every turn — so a stream of callouts from either
+carries no signal. ``human`` is left out as not being an object of measurement.
+
+Deliberately a separate set from :data:`BUILTIN_KINDS`, which it happens to equal
+today. The two answer different questions and are expected to diverge: a
+reinforcement-learning player (§3) would be built in like ``perfect`` and
+``random``, yet — being neither optimal nor aimless — would be very much worth
+grading.
 """
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
@@ -156,17 +172,15 @@ def add_mistake_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def llm_sides(kinds: dict[Side, str]) -> frozenset[Side]:
-    """Which sides are played by an LLM, given each side's ``kind``.
+def gradable_sides(kinds: dict[Side, str]) -> frozenset[Side]:
+    """Which sides mistake-flagging should grade, given each side's ``kind``.
 
-    This is what mistake-flagging grades (§5). The built-in players are left out
-    for opposite reasons: ``perfect`` can never qualify, being the ground truth
-    the grading measures against, while ``random`` would qualify on nearly every
-    turn — so callouts from either carry no signal. It is also what decides
-    whether the roster needs loading at all.
+    Gradability is the question being asked here — not whether the player is an
+    LLM, which is merely what the answer amounts to today (see
+    :data:`NON_GRADABLE_KINDS`).
     """
     return frozenset(
-        side for side, kind in kinds.items() if kind not in BUILTIN_KINDS
+        side for side, kind in kinds.items() if kind not in NON_GRADABLE_KINDS
     )
 
 

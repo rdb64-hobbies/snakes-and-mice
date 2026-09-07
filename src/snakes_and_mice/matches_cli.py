@@ -24,7 +24,7 @@ from .cli_common import (
     add_prune_thinking_argument,
     add_seed_argument,
     add_watch_argument,
-    llm_sides,
+    gradable_sides,
     make_observer,
     make_player,
     parse_seed,
@@ -155,12 +155,12 @@ def main(argv: list[str] | None = None) -> None:
                 prune_thinking=args.prune_thinking,
             )
             # Every name here comes from the roster, so both sides are LLMs and
-            # both are graded when flagging is on (§5).
+            # both are gradable when flagging is on (§5).
             result: MatchResult = play_match(
                 mouse, snake, args.games,
                 make_observer(
                     args.watch,
-                    mistake_sides=llm_sides(
+                    mistake_sides=gradable_sides(
                         {Side.MOUSE: mouse_name, Side.SNAKE: snake_name}
                     ),
                     mistakes_path=mistakes_path,

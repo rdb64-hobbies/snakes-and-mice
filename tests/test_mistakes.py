@@ -17,7 +17,12 @@ import pytest
 
 from snakes_and_mice import Cell, Move, Side, TurnOutcome
 from snakes_and_mice.board import Board
-from snakes_and_mice.cli_common import llm_sides, make_observer
+from snakes_and_mice.cli_common import (
+    BUILTIN_KINDS,
+    NON_GRADABLE_KINDS,
+    gradable_sides,
+    make_observer,
+)
 from snakes_and_mice.console import ConsoleObserver
 from snakes_and_mice.mistakes import Mistake, MistakeObserver
 from snakes_and_mice.observer import BroadcastObserver
@@ -237,14 +242,24 @@ def test_a_game_with_no_table_is_left_ungraded(
 # --- Composition and CLI wiring ---------------------------------------------
 
 
-def test_llm_sides_picks_out_the_roster_names() -> None:
-    assert llm_sides({Side.MOUSE: "qwen", Side.SNAKE: "perfect"}) == frozenset(
+def test_gradable_sides_excludes_only_the_non_gradable_kinds() -> None:
+    assert gradable_sides({Side.MOUSE: "qwen", Side.SNAKE: "perfect"}) == frozenset(
         {Side.MOUSE}
     )
-    assert llm_sides({Side.MOUSE: "random", Side.SNAKE: "human"}) == frozenset()
-    assert llm_sides({Side.MOUSE: "qwen", Side.SNAKE: "opus"}) == frozenset(
+    assert gradable_sides({Side.MOUSE: "random", Side.SNAKE: "human"}) == frozenset()
+    assert gradable_sides({Side.MOUSE: "qwen", Side.SNAKE: "opus"}) == frozenset(
         {Side.MOUSE, Side.SNAKE}
     )
+
+
+def test_gradability_is_not_the_same_question_as_how_to_build_a_player() -> None:
+    # The two sets are equal today and are still kept apart, because they answer
+    # different questions and are expected to diverge: a built-in player that is
+    # neither optimal nor aimless -- the RL player (§3) -- would belong to
+    # BUILTIN_KINDS while remaining very much worth grading. Anything not named
+    # as non-gradable grades, whether or not it is a roster name.
+    assert NON_GRADABLE_KINDS == BUILTIN_KINDS  # for now
+    assert gradable_sides({Side.MOUSE: "rl"}) == frozenset({Side.MOUSE})
 
 
 def test_make_observer_composes_watching_with_flagging() -> None:

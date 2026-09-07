@@ -691,20 +691,27 @@ by a program, not a person, has no reason to discard signal.
 
 **Which side(s) are graded is decided by the caller, not the observer.** The
 observer takes an explicit set of `Side`s to watch and knows nothing about player
-kinds; the CLI derives that set from which side(s) are LLM roster names, the same
-discrimination `cli_common.make_player` already makes to build them (§8). Grading
-a mechanical player would produce no signal worth watching either way: `perfect`
-never qualifies (it is the ground truth being measured against, so it can never
-produce a lower value than the position already held), and `random` would qualify
-on nearly every non-trivial turn (it has no way to avoid one), so a constant stream
-of notifications would mean as little as none at all. Grading is not, however,
-limited to LLM-vs-mechanical play — an LLM-vs-LLM match can have both sides graded
-at once, which is exactly the case a fault tally alone is silent on (§1's "how
-often it faults" says nothing about legal-but-suboptimal play). This falls out per
-match rather than per run, so both runners get it right knowing nothing new:
-`play-match` reads it off `--mouse` and `--snake`, while in
-`play-tournament-matches` every name comes from the roster, so both sides always
-grade.
+kinds at all. The CLI decides, and the question it asks is whether a side is
+**gradable** — which player kinds have nothing to learn from being graded. Two fail
+in opposite directions: `perfect` can never register a mistake, being the ground
+truth every move is measured against, while `random` would register one on nearly
+every turn, so a stream of callouts from either says as little as none at all.
+`human` is left out as not being an object of measurement.
+
+Gradability is deliberately **not** the same question as whether a side is an LLM,
+though the two coincide today. A reinforcement-learning player (§3) would be built
+in alongside `perfect` and `random`, yet — being neither optimal nor aimless — would
+be exactly the kind of player worth grading. The two are therefore kept as separate
+sets, so that adding such a player is a matter of not listing it as non-gradable
+rather than of unpicking a conflation.
+
+Grading is also not limited to a fallible player against a mechanical one: an
+LLM-vs-LLM match can have both sides graded at once, which is exactly the case a
+fault tally alone is silent on (§1's "how often it faults" says nothing about
+legal-but-suboptimal play). This falls out per match rather than per run, so both
+runners get it right knowing nothing new: `play-match` reads it off `--mouse` and
+`--snake`, while in `play-tournament-matches` every name comes from the roster, so
+both sides always grade.
 
 **Two flags, both off by default and both orthogonal to `--watch`**, expose this on
 `play-match` and `play-tournament-matches` alike (§7). `--flag-mistakes` calls each
@@ -1016,7 +1023,7 @@ mainly for debugging and casual play, it stays out of the results file unless as
 `--flag-mistakes` (off by default) calls out each legal move that throws away a win
 or a draw, with the board it was played from, and `--mistakes-file [FILE]` (off by
 default, bare ⇒ `mistakes.jsonl`) records every mistake found as a JSON line; both
-are orthogonal to `--watch` and grade whichever sides are LLMs (§5).
+are orthogonal to `--watch` and grade whichever sides are gradable (§5).
 E.g. `play-match --mouse human --snake random` plays a single game as Mouse, and
 `play-match --mouse opus --snake gpt5 --games 20 --watch game` runs a 20-game match
 between two LLMs, reporting per game.
