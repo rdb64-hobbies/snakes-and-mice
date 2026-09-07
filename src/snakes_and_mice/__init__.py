@@ -18,7 +18,7 @@ from .faults import (
 )
 from .game import play_game
 from .match import play_match
-from .observer import ObservationLevel, Observer
+from .observer import BroadcastObserver, ObservationLevel, Observer
 from .players import (
     HumanPlayer,
     LLMMove,
@@ -33,6 +33,7 @@ from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
 __all__ = [
     "BOARD_SIZE",
     "Board",
+    "BroadcastObserver",
     "Cell",
     "GameResult",
     "HumanPlayer",

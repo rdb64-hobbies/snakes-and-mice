@@ -10,6 +10,7 @@ watch* is a property of the watcher, not of the game.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import IntEnum
 
 from .board import Board
@@ -83,3 +84,48 @@ class Observer:
         reflects it. Fires once per accepted move (including the terminal one),
         and not at all for a turn that ends in a fault."""
         return None
+
+
+class BroadcastObserver(Observer):
+    """Drives several observers from one, forwarding every hook in order.
+
+    The engine takes a single observer, but watching and *annotating* a match are
+    separate concerns that compose — rendering the board (:mod:`console`) and
+    flagging mistakes (:mod:`mistakes`, §5) are each useful with or without the
+    other. Rather than teach either one about the other, they are held side by
+    side here.
+
+    Its own :attr:`level` is meaningless: the engine is level-blind and fires
+    every hook anyway, and each member gates its own output against the level it
+    was built with.
+    """
+
+    def __init__(self, observers: Sequence[Observer]) -> None:
+        super().__init__(ObservationLevel.MOVE)
+        self.observers: tuple[Observer, ...] = tuple(observers)
+
+    def on_match_start(self, names: dict[Side, str], num_games: int) -> None:
+        for observer in self.observers:
+            observer.on_match_start(names, num_games)
+
+    def on_match_end(self, result: MatchResult) -> None:
+        for observer in self.observers:
+            observer.on_match_end(result)
+
+    def on_game_start(self, names: dict[Side, str], board: Board) -> None:
+        for observer in self.observers:
+            observer.on_game_start(names, board)
+
+    def on_game_end(self, result: GameResult) -> None:
+        for observer in self.observers:
+            observer.on_game_end(result)
+
+    def on_move_start(self, side: Side, board: Board) -> None:
+        for observer in self.observers:
+            observer.on_move_start(side, board)
+
+    def on_move_end(
+        self, side: Side, move: Move, board: Board, outcome: TurnOutcome
+    ) -> None:
+        for observer in self.observers:
+            observer.on_move_end(side, move, board, outcome)

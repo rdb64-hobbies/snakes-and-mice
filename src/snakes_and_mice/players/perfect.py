@@ -93,6 +93,19 @@ def _cell_index(cell: Cell) -> int:
     return cell.row * BOARD_SIZE + cell.col
 
 
+def _masks_of(board: Board) -> tuple[int, int]:
+    """The (mouse, snake) bit-masks of an arbitrary board."""
+    mouse: int = 0
+    snake: int = 0
+    for i, cell in enumerate(_CELLS_BY_INDEX):
+        occupant: Side | None = board.occupant(cell)
+        if occupant is Side.MOUSE:
+            mouse |= 1 << i
+        elif occupant is Side.SNAKE:
+            snake |= 1 << i
+    return mouse, snake
+
+
 _CELLS_BY_INDEX: tuple[Cell, ...] = tuple(
     Cell(i // BOARD_SIZE, i % BOARD_SIZE) for i in range(CELL_COUNT)
 )
@@ -487,15 +500,7 @@ class PerfectPlayer(Player):
 
     def _masks(self) -> tuple[int, int]:
         """The (mouse, snake) bit-masks of the player's current board view."""
-        mouse: int = 0
-        snake: int = 0
-        for i, cell in enumerate(_CELLS_BY_INDEX):
-            occupant: Side | None = self._board.occupant(cell)
-            if occupant is Side.MOUSE:
-                mouse |= 1 << i
-            elif occupant is Side.SNAKE:
-                snake |= 1 << i
-        return mouse, snake
+        return _masks_of(self._board)
 
     @staticmethod
     def _empty_indices(occupied: int) -> list[int]:
@@ -574,3 +579,88 @@ class PerfectPlayer(Player):
             return total
 
         return sorted(empties, key=weight, reverse=True)
+
+
+def _board_from_masks(mouse: int, snake: int) -> Board:
+    """A ``Board`` occupied exactly as ``(mouse, snake)`` specify.
+
+    ``Board.__init__`` always auto-seeds one snake cell, so it is built seeded
+    on an actual snake bit (every reachable position has at least one — the
+    seed piece is permanent) and the rest placed around it.
+    """
+    seed_index: int = (snake & -snake).bit_length() - 1
+    board = Board(_CELLS_BY_INDEX[seed_index])
+    for i, cell in enumerate(_CELLS_BY_INDEX):
+        if i == seed_index:
+            continue
+        if (mouse >> i) & 1:
+            board.place(cell, Side.MOUSE)
+        elif (snake >> i) & 1:
+            board.place(cell, Side.SNAKE)
+    return board
+
+
+def evaluate(board: Board, side: Side, table: PerfectTable | None = None) -> int:
+    """Exact game-theoretic value of ``board`` for ``side`` to move (§10).
+
+    The same two-tier evaluation :class:`PerfectPlayer` performs at its own root
+    when choosing a move — a ``table`` lookup where it covers the position, full
+    negamax search (correct, but far too slow in the opening) otherwise —
+    exposed standalone so *another* player's actual move can be graded against
+    ground truth: call this before and after the move and compare. ``board``
+    must be a legitimate, non-terminal position with ``side`` to move and at
+    least one empty cell (guaranteed by the engine's turn flow, §2.5).
+
+    A win available to ``side`` is valued correctly without special-casing: a
+    covered table entry already reflects it, and the search fallback's own
+    ``_wins_now`` check (inside ``_negamax``) does too.
+    """
+    mouse, snake = _masks_of(board)
+    return _evaluate_masks(mouse, snake, side, table)
+
+
+def _evaluate_masks(
+    mouse: int, snake: int, side: Side, table: PerfectTable | None
+) -> int:
+    empties: int = CELL_COUNT - mouse.bit_count() - snake.bit_count()
+    if empties <= 0:
+        raise ValueError("evaluate() called on a full board")
+    if table is not None and table.covers(empties):
+        stored: int | None = table.value(empties, canonical_key(mouse, snake))
+        if stored is not None:
+            return stored
+
+    depth: int = (mouse.bit_count() + snake.bit_count() - 1) // 2
+
+    if table is not None and table.covers(empties - 2):
+        # This position's own layer is not covered, but its *children*'s is —
+        # exactly the shape `PerfectPlayer.choose_move` already searches fast
+        # (it always looks up children, never its own position). Reuse it to
+        # get the best move, then recurse one ply down, landing in coverage —
+        # rather than falling through to a search at the widest ply in the
+        # game, which the "not covered" case below would otherwise trigger.
+        scratch = PerfectPlayer(rng=random.Random())
+        scratch._side = side
+        scratch._table = table
+        scratch._tt = {}
+        scratch._board = _board_from_masks(mouse, snake)
+        choice = scratch.choose_move()
+        mine: int = mouse if side is Side.MOUSE else snake
+        added: int = sum(
+            1 << (c.row * BOARD_SIZE + c.col) for c in choice.move.cells
+        )
+        if PerfectPlayer._completes(mine | added):
+            return _WIN - depth
+        child_mouse: int = mouse | added if side is Side.MOUSE else mouse
+        child_snake: int = snake if side is Side.MOUSE else snake | added
+        if PerfectPlayer._is_cats(child_mouse, child_snake):
+            return 0
+        return -_evaluate_masks(child_mouse, child_snake, side.other, table)
+
+    # A scratch instance borrows PerfectPlayer's search machinery, isolated to
+    # this one call: its own fresh transposition table, never persisted or
+    # shared across evaluations. `rng` is unused — `_negamax` never tie-breaks.
+    scratch = PerfectPlayer(rng=random.Random())
+    scratch._side = side
+    scratch._tt = {}
+    return scratch._negamax(mouse, snake, side, depth, -_WIN - 1, _WIN + 1)

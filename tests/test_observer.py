@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from snakes_and_mice import (
     Board,
+    BroadcastObserver,
     GameResult,
     Move,
     MoveChoice,
@@ -131,4 +132,23 @@ def test_observer_is_optional() -> None:
     # Omitting the observer must not change the game outcome.
     mouse, snake = _mouse_wins_row_a()
     result = play_game(mouse, snake)
+    assert result.termination is Termination.LINE_COMPLETED
+
+
+def test_broadcast_drives_every_member() -> None:
+    # The engine takes one observer, but watching and annotating a match are
+    # separate concerns that have to be able to run together (§5).
+    first, second = _Recorder(), _Recorder()
+    mouse, snake = _mouse_wins_row_a()
+    result = play_game(mouse, snake, BroadcastObserver([first, second]))
+
+    for recorder in (first, second):
+        assert recorder.result is result
+        assert recorder.moves[0][1] == Move.from_labels("A1", "A2")
+        assert recorder.moves[-1][2] is TurnOutcome.WIN
+
+
+def test_broadcast_with_no_members_is_harmless() -> None:
+    mouse, snake = _mouse_wins_row_a()
+    result = play_game(mouse, snake, BroadcastObserver([]))
     assert result.termination is Termination.LINE_COMPLETED

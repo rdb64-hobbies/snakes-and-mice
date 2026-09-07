@@ -19,10 +19,18 @@ from .roster import Roster
 from .console import ConsoleObserver, SECOND_PERSON
 from .core import Cell, Side
 from .faults import IllegalMove
-from .observer import ObservationLevel, Observer
+from .mistakes import DEFAULT_MISTAKES_PATH, MistakeObserver
+from .observer import BroadcastObserver, ObservationLevel, Observer
 from .players import HumanPlayer, LLMPlayer, PerfectPlayer, Player, RandomPlayer
 
 SEED_DEFAULT: str = "random"
+
+BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random", "perfect"})
+"""The player kinds that are *not* roster names — anything else names an LLM.
+
+One definition, used both to build a player and to decide which sides are worth
+grading for mistakes (§5), so the two can never disagree about what an LLM is.
+"""
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
 PERFECT_NAME: dict[Side, str] = {Side.MOUSE: "Percy", Side.SNAKE: "Perseus"}
@@ -128,12 +136,63 @@ def parse_seed(value: str) -> Cell | random.Random:
         ) from exc
 
 
-def make_observer(watch: str) -> Observer | None:
-    """The console observer for a ``--watch`` choice, or ``None`` for ``none``.
+def add_mistake_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the ``--flag-mistakes`` / ``--mistakes-file`` opt-ins (§5).
 
-    ``none`` maps to no observer at all, so the engine runs down its existing
-    "no watcher" path and stays silent — cleaner than a do-nothing observer.
+    Both are off by default and orthogonal to ``--watch``: flagging annotates
+    play with something the level scale has no way to express — that a move was
+    *wrong* — so it is wanted at any level, or at none.
     """
-    if watch == "none":
-        return None
-    return ConsoleObserver(observation_level(watch))
+    parser.add_argument(
+        "--flag-mistakes", action="store_true",
+        help="call out legal moves that throw away a win or a draw, as they "
+             "happen (default: off)",
+    )
+    parser.add_argument(
+        "--mistakes-file", nargs="?", const=str(DEFAULT_MISTAKES_PATH),
+        default=None, metavar="FILE",
+        help="record every mistake found as a JSON line; bare to append to "
+             f"{DEFAULT_MISTAKES_PATH} (default: off)",
+    )
+
+
+def llm_sides(kinds: dict[Side, str]) -> frozenset[Side]:
+    """Which sides are played by an LLM, given each side's ``kind``.
+
+    This is what mistake-flagging grades (§5). The built-in players are left out
+    for opposite reasons: ``perfect`` can never qualify, being the ground truth
+    the grading measures against, while ``random`` would qualify on nearly every
+    turn — so callouts from either carry no signal. It is also what decides
+    whether the roster needs loading at all.
+    """
+    return frozenset(
+        side for side, kind in kinds.items() if kind not in BUILTIN_KINDS
+    )
+
+
+def make_observer(
+    watch: str,
+    *,
+    mistake_sides: frozenset[Side] = frozenset(),
+    mistakes_path: Path | None = None,
+    flag_mistakes: bool = False,
+) -> Observer | None:
+    """The observer for one match, or ``None`` if nothing is watching.
+
+    ``none`` with no grading maps to no observer at all, so the engine runs down
+    its existing "no watcher" path and stays silent — cleaner than a do-nothing
+    observer. Otherwise the console renderer and the mistake grader are composed
+    with :class:`~snakes_and_mice.observer.BroadcastObserver` — or either alone,
+    if only one was asked for.
+    """
+    console: Observer | None = (
+        None if watch == "none" else ConsoleObserver(observation_level(watch))
+    )
+    grader: Observer | None = None
+    if mistake_sides and (flag_mistakes or mistakes_path is not None):
+        grader = MistakeObserver(
+            mistake_sides, report=flag_mistakes, path=mistakes_path
+        )
+    if console is not None and grader is not None:
+        return BroadcastObserver([console, grader])
+    return console if grader is None else grader

@@ -6,11 +6,12 @@
 > as planned in §3.
 
 > **Status: early, partial draft.** This document covers what has actually been
-> decided so far — the goal, the overall training strategy, and the investigation
-> underway to find out whether that strategy's premise holds. It deliberately does
-> **not** cover the training algorithm, any model or network architecture, or the
-> exact form the "mistake model" (§"Training strategy" below) will take — none of
-> that has been decided yet, and this document will grow to cover it once it is.
+> decided or measured so far — the goal, the overall training strategy, and the
+> investigation into whether that strategy's premise holds (it does; see "Result"
+> below). It deliberately does **not** cover the training algorithm, any model or
+> network architecture, or the exact form the "mistake model" (§"Training strategy"
+> below) will take — none of that has been decided yet, and this document will grow
+> to cover it once it is.
 
 ## Goal
 
@@ -96,8 +97,8 @@ form the mistake model takes (what it's fit on, what class of model it is, how
 Everything above assumes LLMs make mistakes worth exploiting at all — a legal move
 that is not just imperfect but *reliably*, *detectably* worse than what was
 available. That is an empirical question, not an assumption to build on faith, and
-answering it is the current work: a go/no-go measurement that has to come back
-positive before the rest of the loop above is worth investing further in.
+it was the go/no-go gate for the rest of this document. It has now been measured,
+and it came back positive ("Result", below).
 
 ### What counts as a mistake
 
@@ -112,7 +113,7 @@ whether or not it looks like ordinary play and whether or not it triggers any
 fault at all.
 
 This grading mechanism, and the severity split below, are general-purpose and are
-specified once, in SPEC.md §5 ("Flagging mistakes (planned)") and §10 (the
+specified once, in SPEC.md §5 ("Flagging mistakes") and §10 (the
 `evaluate(board, side)` primitive) — this document does not repeat that
 specification, only how it is being used here:
 
@@ -125,29 +126,36 @@ specification, only how it is being used here:
   from the model in the first place (SPEC.md §4) and so cannot be a source of
   ground truth about it.
 
-### The measurement tool
+### How the measurement is run
 
-`tools/find_llm_mistakes.py` plays a live match between a named LLM roster player
-and a fixed opponent — `perfect` by default, since its trap-ranking behavior
-(SPEC.md §10) is the best currently-available tool for provoking a fallible
-opponent into error, with `random` available for contrast — and grades every move
-the LLM makes via the before/after value diff above. It reports the mistake rate
-and severity breakdown, and can append each detected mistake (board, move, and the
-exact values before and after) to a file for later use fitting the mistake model
-(step 4 of the training strategy above). Because a match fixes sides for its whole
-duration (SPEC.md §5), seeing the LLM's mistakes as both Mouse and Snake means
-running it both ways.
+No special tooling: this is `play-match` with `--flag-mistakes` and
+`--mistakes-file` (SPEC.md §5, §7), against `perfect` — whose trap-ranking (SPEC.md
+§10) makes it the best available provoker of a fallible opponent, and the closest
+stand-in for what a trained exploiter would itself be. Because a match fixes sides
+for its whole duration (SPEC.md §5), covering both seats means running it twice.
 
-This is a standalone measurement script (`tools/`, SPEC.md §8), not part of the
-project's three CLI commands (SPEC.md §7): it exists to answer this one question,
-not to be a durable part of the interface.
+That the general capability and this investigation's needs turned out to be the
+same thing is not a coincidence: "which legal moves gave something away" is one
+question, and it has one answer whoever is asking. A separate script existed
+briefly and was removed once the flags landed; the recorded file is the interface
+this document depends on, not any particular program.
 
-### Status
+### Result: the premise holds
 
-The tool and the `evaluate()` primitive it depends on are implemented and tested
-locally — against hand-built positions and a scripted opponent, with no live model
-calls — but the actual measurement (running it against a real target LLM) has not
-been done yet: the shared model-serving capacity it needs has been busy with other
-work. That measurement is the gate for the rest of this document: it determines
-whether the training strategy above is worth pursuing at all, before any further
-design commitments are made.
+Measured 2026-09-07 against `qwen-3-8-rtx`, 40 games (20 per seat), randomized
+openings:
+
+- **188 moves graded, 4 mistakes — all four hard**, and no soft ones at all. This
+  model does not drift; it either finds the exactly optimal move or throws the game
+  away in one move.
+- **The four mistakes are exactly the four games it lost.** Since `perfect` never
+  errs, it can only ever win a game the opponent hands it, and the grading located
+  the hand-off every time — each a drawn position played straight into a loss.
+- Zero faults across all 40 games, which is the point of measuring mistakes at all:
+  a fault tally would have reported this model as flawless.
+
+So mistakes worth exploiting exist, they are decisive rather than marginal, and at
+roughly one per ten games they are frequent enough to collect. The strategy above
+is worth pursuing. What is *not* yet established is the premise it actually rests
+on — that these mistakes are **systematic**, not scattered — which needs many more
+of them than four, and is what the collected file is for.

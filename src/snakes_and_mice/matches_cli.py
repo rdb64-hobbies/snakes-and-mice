@@ -20,9 +20,11 @@ from pathlib import Path
 
 from .cli_common import (
     DEFAULT_RESULTS_PATH,
+    add_mistake_arguments,
     add_prune_thinking_argument,
     add_seed_argument,
     add_watch_argument,
+    llm_sides,
     make_observer,
     make_player,
     parse_seed,
@@ -103,6 +105,7 @@ def main(argv: list[str] | None = None) -> None:
         "--tournament-results", type=Path, default=DEFAULT_RESULTS_PATH, metavar="FILE",
         help=f"results file to append to (default: {DEFAULT_RESULTS_PATH})",
     )
+    add_mistake_arguments(parser)
     args: argparse.Namespace = parser.parse_args(argv)
 
     if args.games < 1:
@@ -118,6 +121,9 @@ def main(argv: list[str] | None = None) -> None:
 
     quiet_http_logging()
     results_path: Path = args.tournament_results
+    mistakes_path: Path | None = (
+        Path(args.mistakes_file) if args.mistakes_file is not None else None
+    )
 
     try:
         load_environment()
@@ -148,8 +154,19 @@ def main(argv: list[str] | None = None) -> None:
                 snake_name, Side.SNAKE, roster, None,
                 prune_thinking=args.prune_thinking,
             )
+            # Every name here comes from the roster, so both sides are LLMs and
+            # both are graded when flagging is on (§5).
             result: MatchResult = play_match(
-                mouse, snake, args.games, make_observer(args.watch), opening
+                mouse, snake, args.games,
+                make_observer(
+                    args.watch,
+                    mistake_sides=llm_sides(
+                        {Side.MOUSE: mouse_name, Side.SNAKE: snake_name}
+                    ),
+                    mistakes_path=mistakes_path,
+                    flag_mistakes=args.flag_mistakes,
+                ),
+                opening,
             )
             append_match_result(result, results_path)
     except ConfigError as exc:

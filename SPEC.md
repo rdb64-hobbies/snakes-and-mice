@@ -13,7 +13,7 @@ their work touches. Section numbers are stable and never reused.
 | **`SPEC.md`** (this file) | The game and rules (§2), the `Player` abstraction (§3), matches (§5), tournaments (§6), the CLI (§7), architecture (§8), tooling (§9), versioning and scope (§11). |
 | [`SPEC-llm-player.md`](SPEC-llm-player.md) | The **LLM player** in full: Pydantic AI, structured output, the message thread, reasoning pruning, model/provider selection, thinking levels, message logging, endpoint probes. Summarized in §4. |
 | [`SPEC-perfect-player.md`](SPEC-perfect-player.md) | The **algorithmic (perfect) player** in full: alpha–beta search, depth-aware scoring, the 32-element symmetry group and transposition table, the tie-break, the opening table, the solved result. Summarized in §10. |
-| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, and the investigation underway into whether LLM mistakes are exploitable. Summarized in §3, "Player types". |
+| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, and the measured finding that LLM mistakes are exploitable. Summarized in §3, "Player types". |
 | [`tools/solver/SPEC.md`](tools/solver/SPEC.md) | The **offline solver** that produces the perfect player's opening table, and the table file format. |
 
 §4 and §10 remain in this document as summaries: each states the contract the rest of
@@ -664,7 +664,7 @@ only thing that ever waits for input is a human player taking its own turn. Beca
 a human must see the board to play, **if either player is human the CLI builds the
 observer at `MOVE`** (a coarser request is overridden, with a message).
 
-### Flagging mistakes (planned)
+### Flagging mistakes
 
 Observation level (above) controls how much of *ordinary* play is shown; flagging
 mistakes is an orthogonal concern layered on top of any level, for a different
@@ -683,10 +683,11 @@ annotation on a match that plays out exactly as it otherwise would.
 A mistake is **hard** if it crosses a win/draw/loss boundary (a drawn position
 played into a loss, a won one played into a draw or a loss) and **soft** if it
 stays within the same class but settles for a worse depth (a slower win, a faster
-loss). Only hard mistakes are surfaced: a "wrong" move in the depth-only sense is
-otherwise routine near the end of a mostly-drawn game, and flagging every one would
-bury the point of flagging anything — calling out something worth a human's
-attention.
+loss). Only hard mistakes are **called out**: a "wrong" move in the depth-only sense
+is otherwise routine near the end of a mostly-drawn game, and interrupting a watcher
+with every one would bury the point of flagging anything. Both kinds are
+**recorded**, though (below), each carrying which it was — a file being read later
+by a program, not a person, has no reason to discard signal.
 
 **Which side(s) are graded is decided by the caller, not the observer.** The
 observer takes an explicit set of `Side`s to watch and knows nothing about player
@@ -699,13 +700,33 @@ on nearly every non-trivial turn (it has no way to avoid one), so a constant str
 of notifications would mean as little as none at all. Grading is not, however,
 limited to LLM-vs-mechanical play — an LLM-vs-LLM match can have both sides graded
 at once, which is exactly the case a fault tally alone is silent on (§1's "how
-often it faults" says nothing about legal-but-suboptimal play).
+often it faults" says nothing about legal-but-suboptimal play). This falls out per
+match rather than per run, so both runners get it right knowing nothing new:
+`play-match` reads it off `--mouse` and `--snake`, while in
+`play-tournament-matches` every name comes from the roster, so both sides always
+grade.
 
-A new flag, `--flag-mistakes` (off by default, orthogonal to `--watch`), will
-expose this on both `play-match` and `play-tournament-matches` (§7) once
-implemented. Like `PerfectPlayer` itself, it depends on the seed's opening table
-(§10) for the opening plies; a missing table degrades it the same way — correct,
-but potentially very slow, rather than silently wrong.
+**Two flags, both off by default and both orthogonal to `--watch`**, expose this on
+`play-match` and `play-tournament-matches` alike (§7). `--flag-mistakes` calls each
+hard mistake out as it happens, rendering the board the player moved *from* — the
+position, not the wreckage, being what shows the reader what was missed.
+`--mistakes-file [FILE]` records every mistake as one JSON line, appended as it is
+found, so an interrupted run still leaves everything it had seen. Either flag alone
+is reason enough to grade: recording without watching is how a batch collects
+mistakes unattended, and watching without recording is how a person reads a single
+match. **Each line is self-contained** — it carries the board as occupancy rather
+than as the move history that produced it, so a reader needs nothing but the line
+itself, the same stance §6 takes for the results file, and the same reason: the
+file long outlives the run that wrote it.
+
+Grading needs the seed's opening table (§10), and this is the one place its absence
+is handled differently from how `PerfectPlayer` handles it. The player without a
+table searches, because searching *is* its job; grading without one would mean
+valuing the opening by searching the widest ply in the game, which is not merely
+slow but effectively unbounded. An annotation must never stall the match it is
+annotating, so **a game whose table is missing is left ungraded** — announced by the
+warning `load_for_seed` already prints — rather than holding play up for a
+diagnostic.
 
 ## 6. Tournaments
 
@@ -992,6 +1013,10 @@ LLM request (§4, "Pruning re-sent reasoning"); also a no-op for non-LLM players
 as a line in the results file (§6) — absent ⇒ nothing is written, bare ⇒ append to
 `tournament-results.jsonl`, with a path ⇒ append there. Because this command is
 mainly for debugging and casual play, it stays out of the results file unless asked.
+`--flag-mistakes` (off by default) calls out each legal move that throws away a win
+or a draw, with the board it was played from, and `--mistakes-file [FILE]` (off by
+default, bare ⇒ `mistakes.jsonl`) records every mistake found as a JSON line; both
+are orthogonal to `--watch` and grade whichever sides are LLMs (§5).
 E.g. `play-match --mouse human --snake random` plays a single game as Mouse, and
 `play-match --mouse opus --snake gpt5 --games 20 --watch game` runs a 20-game match
 between two LLMs, reporting per game.
@@ -1000,8 +1025,10 @@ between two LLMs, reporting per game.
 append each result to the file (§6). Options: `--players` / `--against` (the subset
 selectors), `--games N`, `--seed` (opening for every game: `random` default or a
 fixed cell, §5), `--watch` (default `game`), `--prune-thinking` (§4, off by default;
-most worthwhile here, since a batch is where context growth binds), and
-`--tournament-results [FILE]` (path override only — this command always appends). Human players are
+most worthwhile here, since a batch is where context growth binds),
+`--tournament-results [FILE]` (path override only — this command always appends), and
+`--flag-mistakes` / `--mistakes-file [FILE]` (§5, both off by default; every player
+here comes from the roster, so both sides are graded). Human players are
 rejected. E.g. `play-tournament-matches` runs a full round-robin, and
 `play-tournament-matches --players new-model --against all` enters a new player
 against the whole roster.
@@ -1035,7 +1062,14 @@ Rough module layout:
   firing the `Observer` hooks in lockstep.
 - `observer` — the `Observer` spectator interface and the `ObservationLevel` that
   an observer uses to gate its own output; depends on neither `game` nor `match`,
-  so both can drive it without a cycle.
+  so both can drive it without a cycle. It also holds `BroadcastObserver`, which drives
+  several observers from the one the engine accepts — watching a match and
+  annotating it (`mistakes`, below) are separate concerns that compose, and neither
+  needs to know the other exists.
+- `mistakes` — flagging mistakes (§5): the `Mistake` record, its JSON encoding, and
+  the observer that grades a match by diffing `evaluate` (§10) across every move by
+  the sides it was handed. Detection lives here; board rendering stays in `console`,
+  which this reuses.
 - `match` — runs a match: a sequence of games between two fixed players (§5),
   reusing the same instances so LLM feedback carries across games, and producing a
   `MatchResult`.
@@ -1110,8 +1144,8 @@ What the rest of this document relies on:
   opening, correct but far too slow to be practical, and says so on stderr.
 - That two-tier evaluation is also exposed standalone, as `evaluate(board, side)` —
   not only used internally to pick this player's own move. It is the primitive §5's
-  planned mistake-flagging builds on, to grade *any* player's actual move against
-  ground truth.
+  mistake-flagging builds on, to grade *any* player's actual move against ground
+  truth.
 - Among equally optimal moves it **ranks for trappiness** rather than picking blindly,
   which is what makes it dangerous to a fallible opponent without ever risking the
   draw. This is not configurable.
@@ -1180,7 +1214,14 @@ progress toward that, not incidental churn.
     reply is parsed as text, so no grammar touches generation. Built to test whether
     constrained decoding was costing play quality against the perfect player. It is
     not: prompted and native draw alike. The mode stays, as the answer to a question
-    that will otherwise be asked again. _(current)_
+    that will otherwise be asked again.
+  - **1.7** — **flagging mistakes** (§5): a match can now be annotated with the
+    legal moves that threw a win or a draw away, called out live with the board they
+    were played from and recorded to a file for later study. This is the benchmark's
+    first measure of *how well* a model played rather than only what it scored — a
+    fault tally (§6) is silent on a legal move that quietly loses the game. It needs
+    no new analysis to be trustworthy: the game is solved (§10), so the perfect
+    player's own evaluation, exposed as `evaluate`, decides it exactly. _(current)_
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic

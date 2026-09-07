@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import itertools
 import random
-import struct
 from pathlib import Path
 
 import pytest
 
 from snakes_and_mice import Cell, Move, Side
+from snakes_and_mice.board import Board
 from snakes_and_mice.players.perfect import (
     _ALL_DRAWN_ABOVE_EMPTIES,
     _CELLS_BY_INDEX,
@@ -23,15 +23,15 @@ from snakes_and_mice.players.perfect import (
     _WIN,
     _Candidate,
     PerfectPlayer,
+    evaluate,
 )
 from snakes_and_mice.players.symmetry import CELL_COUNT, canonical_key
 from snakes_and_mice.players.table import (
-    MAGIC,
-    VERSION,
     PerfectTable,
     load_for_seed,
     seed_representative,
 )
+from table_helpers import write_table
 
 ORBIT_REPRESENTATIVES: dict[str, set[str]] = {
     "A1": {"A1", "A5", "B2", "B4", "D2", "D4", "E1", "E5"},
@@ -39,21 +39,6 @@ ORBIT_REPRESENTATIVES: dict[str, set[str]] = {
     "A3": {"A3", "B3", "C1", "C2", "C4", "C5", "D3", "E3"},
     "C3": {"C3"},
 }
-
-
-def _write_table(path: Path, layers: dict[int, list[tuple[int, int]]]) -> None:
-    """Write a table file holding the given (key, value) pairs per layer."""
-    ordered: list[int] = sorted(layers, reverse=True)
-    with path.open("wb") as handle:
-        handle.write(struct.pack("<8sBBBB", MAGIC, VERSION, 12, len(ordered), 0))
-        for empties in ordered:
-            handle.write(struct.pack("<BBI", empties, 0, len(layers[empties])))
-        for empties in ordered:
-            entries = sorted(layers[empties])
-            for key, _value in entries:
-                handle.write(struct.pack("<Q", key))
-            for _key, value in entries:
-                handle.write(struct.pack("<h", value))
 
 
 def test_every_seed_maps_to_its_orbit_representative() -> None:
@@ -75,7 +60,7 @@ def test_all_twenty_five_seeds_are_covered() -> None:
 
 def test_table_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "C3.table"
-    _write_table(path, {16: [(5, -3), (9, 0), (2, 996)], 18: [(7, 0)]})
+    write_table(path, {16: [(5, -3), (9, 0), (2, 996)], 18: [(7, 0)]})
     table = PerfectTable.load(path)
 
     assert table.empties_covered == frozenset({16, 18})
@@ -127,7 +112,7 @@ def test_unreadable_table_warns_and_falls_back(
 def test_a_healthy_table_loads_quietly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    _write_table(tmp_path / "C3.table", {16: [(1, 0)]})
+    write_table(tmp_path / "C3.table", {16: [(1, 0)]})
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path))
     assert load_for_seed(Cell.from_label("C3")) is not None
     assert capsys.readouterr().err == ""
@@ -191,7 +176,7 @@ def test_table_and_search_agree_on_the_chosen_value(
 
     table_dir = tmp_path / "with-table"
     table_dir.mkdir()
-    _write_table(table_dir / "C3.table", {len(empties) - 2: entries})
+    write_table(table_dir / "C3.table", {len(empties) - 2: entries})
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
 
     looker = PerfectPlayer(rng=random.Random(1))
@@ -217,7 +202,7 @@ def test_incomplete_table_falls_back_to_search(monkeypatch: pytest.MonkeyPatch, 
     # A table missing even one child must not produce a fast wrong answer.
     table_dir = tmp_path / "partial"
     table_dir.mkdir()
-    _write_table(table_dir / "C3.table", {22: [(1, 0)]})
+    write_table(table_dir / "C3.table", {22: [(1, 0)]})
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
 
     player = PerfectPlayer(rng=random.Random(1))
@@ -423,7 +408,7 @@ def test_table_and_search_agree_on_trap_counts(
 
     table_dir = tmp_path / "grandchildren"
     table_dir.mkdir()
-    _write_table(table_dir / "C3.table", {8: sorted(entries.items())})
+    write_table(table_dir / "C3.table", {8: sorted(entries.items())})
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
     looker = PerfectPlayer(rng=random.Random(1))
     looker.start_game(Side.MOUSE, Cell.from_label("C3"))
@@ -443,7 +428,7 @@ def test_incomplete_table_refuses_to_rank_on_partial_trap_data(
     # rank on whatever it happens to hold — the same stance `_choose_from_table` takes.
     table_dir = tmp_path / "partial"
     table_dir.mkdir()
-    _write_table(table_dir / "C3.table", {8: [(1, 0)]})
+    write_table(table_dir / "C3.table", {8: [(1, 0)]})
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
     player = PerfectPlayer(rng=random.Random(1))
     player.start_game(Side.MOUSE, Cell.from_label("C3"))
@@ -469,3 +454,133 @@ def test_liveness_rewards_concentration_over_breadth() -> None:
 
     # And a line the opponent has touched is spent: it can never be completed.
     assert PerfectPlayer._liveness(mask("A1", "A2", "A3"), mask("A4")) < concentrated
+
+
+# --- Grading another player's moves against ground truth (evaluate) ---------------
+#
+# `evaluate` is `PerfectPlayer`'s own root computation exposed standalone, for a
+# caller that wants a position's exact value without asking it to also produce a
+# move. The properties that matter are that it agrees with a direct search when no
+# table is given, and that it actually uses a table when one covers the position
+# (rather than silently falling through to a slow search).
+
+
+def test_evaluate_scores_an_immediate_win(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
+    board = Board(Cell.from_label("C3"))
+    for label in ("A1", "A2", "A3", "A4"):
+        board.place(Cell.from_label(label), Side.MOUSE)
+    for label in ("B1", "B2", "B3"):
+        board.place(Cell.from_label(label), Side.SNAKE)
+
+    mouse_count, snake_count = 4, 3 + 1  # +1 for the C3 seed
+    depth = (mouse_count + snake_count - 1) // 2
+    assert evaluate(board, Side.MOUSE) == _WIN - depth
+
+
+def test_evaluate_matches_a_direct_negamax_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
+    searcher = PerfectPlayer(rng=random.Random(1))
+    searcher.start_game(Side.MOUSE, Cell.from_label("C3"))
+    placed = {
+        Side.MOUSE: ("A1", "A2", "B4", "E1", "E2", "D5"),
+        Side.SNAKE: ("B1", "B2", "C1", "D1", "E4", "E5"),
+    }
+    for side, labels in placed.items():
+        for label in labels:
+            searcher._board.place(Cell.from_label(label), side)
+
+    mouse, snake = searcher._masks()
+    depth = (mouse.bit_count() + snake.bit_count() - 1) // 2
+    expected = searcher._negamax(mouse, snake, Side.MOUSE, depth, -_WIN - 1, _WIN + 1)
+
+    assert evaluate(searcher._board, Side.MOUSE) == expected
+
+
+def test_evaluate_uses_the_table_when_it_covers_the_position(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A sentinel value no real search could ever produce proves the table path was
+    # actually taken, rather than a fall-through to search happening to agree.
+    board = Board(Cell.from_label("C3"))
+    mouse, snake = 0, 1 << (2 * 5 + 2)  # C3 is row 2 (C), column 2 (3)
+    key = canonical_key(mouse, snake)
+    table_dir = tmp_path / "opening-table"
+    table_dir.mkdir()
+    write_table(table_dir / "C3.table", {24: [(key, 12345)]})
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
+    table = load_for_seed(Cell.from_label("C3"))
+    assert table is not None
+
+    assert evaluate(board, Side.MOUSE, table) == 12345
+
+
+def test_evaluate_recurses_when_only_the_child_layer_is_covered(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Reproduces the real table's shape at a tractable scale: it covers a
+    # *child* layer but not the position's own layer -- the shape that sent an
+    # early version of `evaluate` into a full search at the widest ply in the
+    # game (24 empty cells), instead of reusing PerfectPlayer's own child-
+    # lookup logic (`choose_move` never looks up its own position, only its
+    # children, which is exactly why it never had this problem).
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
+    player = PerfectPlayer(rng=random.Random(1))
+    player.start_game(Side.MOUSE, Cell.from_label("C3"))
+    placed = {
+        Side.MOUSE: ("A1", "A4", "C2", "C5", "D1", "D3", "D4", "E2", "E5"),
+        Side.SNAKE: (
+            "A2", "A3", "A5", "B5", "C1", "C4", "D2", "D5", "E1", "E3", "E4",
+        ),
+    }
+    for side, labels in placed.items():
+        for label in labels:
+            player._board.place(Cell.from_label(label), side)
+    mouse, snake = player._masks()
+    empties = player._empty_indices(mouse | snake)
+    assert len(empties) == 4  # B1, B2, B3, B4 -- everything else is filled
+
+    def cell_bit(label: str) -> int:
+        c = Cell.from_label(label)
+        return 1 << (c.row * 5 + c.col)
+
+    b1, b2, b3, b4 = (cell_bit(label) for label in ("B1", "B2", "B3", "B4"))
+
+    # The anti-diagonal (A5, B4, C3, D2, E1) is all-Snake except B4: any
+    # combination that includes B4 kills it outright -- a forced cat's game,
+    # worth 0 with no table entry needed. The other three combinations do
+    # need one, since `choose_move` refuses to rank on partial data.
+    entries = [
+        (canonical_key(mouse | b1 | b2, snake), -50),
+        (canonical_key(mouse | b1 | b3, snake), 200),
+        (canonical_key(mouse | b2 | b3, snake), 300),
+    ]
+    table_dir = tmp_path / "children-only"
+    table_dir.mkdir()
+    write_table(table_dir / "C3.table", {2: entries})
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(table_dir))
+    table = load_for_seed(Cell.from_label("C3"))
+    assert table is not None
+    assert table.covers(2) and not table.covers(4)
+
+    # B1+B2 stores -50 (Snake to move there), i.e. +50 for Mouse -- better
+    # than the 0 every B4-combination forces, so it must be what's chosen.
+    assert evaluate(player._board, Side.MOUSE, table) == 50
+
+
+def test_evaluate_rejects_a_full_board(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
+    board = Board(Cell.from_label("A1"))
+    labels = [f"{r}{c}" for r in "ABCDE" for c in "12345"]
+    for i, label in enumerate(labels):
+        cell = Cell.from_label(label)
+        if board.is_empty(cell):
+            board.place(cell, Side.MOUSE if i % 2 == 0 else Side.SNAKE)
+    with pytest.raises(ValueError, match="full board"):
+        evaluate(board, Side.MOUSE)

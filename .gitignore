@@ -40,6 +40,10 @@ llm-logs/
 # Tournament results (§6), accumulated locally by play-match/play-tournament-matches
 tournament-results.jsonl
 
+# Recorded mistakes (§5, --mistakes-file), accumulated locally the same way
+mistakes.jsonl
+mistakes-*.jsonl
+
 # OS / editor cruft
 .DS_Store
 *.swp
