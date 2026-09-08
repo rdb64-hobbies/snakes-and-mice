@@ -330,6 +330,23 @@ _each model at the same effort level_, not a byte-identical configuration across
 providers. Per-player effort levels and provider-specific setting overrides are
 deliberately deferred.
 
+**A shared label is not a shared ceiling.** Effort scales are not standardized in
+size across model families, so the same unified level can land at a different
+relative strength on each. `gpt-5` supports only `minimal | low | medium | high` —
+`high` is its maximum — while `gpt-5.6-sol` supports `none | low | medium | high |
+xhigh | max`: `high` sits two rungs below _its_ ceiling, and `max` is not reachable
+through Pydantic AI's unified `thinking` field at all (whose own top is `xhigh`).
+Measured across a four-game match each (2026-09-08), `gpt-5` averaged ~9,100
+reasoning tokens/move against ~600 for `gpt-5.6-sol` — a ~15x gap driven by this
+scale mismatch, not by either model being asked to think harder than the other in
+relative terms. A newer family can grow finer-grained levels above where an older
+family's ceiling used to sit, silently turning "the same effort level" into a
+materially different one; nothing here detects or warns about it, and it is not
+specific to this one model family. Fixing it needs a per-player override that can
+name a **provider-native** effort value (e.g. OpenAI's
+`openai_reasoning_effort='max'`), not only the unified level — the general
+mechanism deferred above, not a one-off for `gpt-5.6`.
+
 **The level is best-effort, and for many models it does not arrive.** Pydantic AI
 drops the unified setting **silently** for any model whose profile reports no support
 — which is every OpenAI-compatible endpoint whose model name it cannot recognize, so
@@ -453,7 +470,10 @@ the question rather than answering it.
 ## Deferred for now
 
 To keep the first LLM player simple, and beyond the game-playing core above:
-usage / cost / latency tracking; per-player or per-provider setting overrides;
-persistence of the message thread across processes; and fully managing a thread that
+usage / cost / latency tracking; per-player or per-provider setting overrides (see
+"Thinking / effort level", "A shared label is not a shared ceiling" — this is what
+blocks asking a family like `gpt-5.6` for its actual top effort level rather than
+the unified scale's); persistence of the message thread across processes; and fully
+managing a thread that
 still outgrows the model's context window over a long match — `--prune-thinking` can
 slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it.
