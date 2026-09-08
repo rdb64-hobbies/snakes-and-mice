@@ -477,3 +477,15 @@ the unified scale's); persistence of the message thread across processes; and fu
 managing a thread that
 still outgrows the model's context window over a long match — `--prune-thinking` can
 slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it.
+
+A further, more speculative idea: a **vision-based LLM player** that perceives the
+board as a rendered image instead of reconstructing it from move history. The engine
+would render the board to an image after each update and pass it to a multimodal
+model, closer to how a human plays — from a physical board, or a hand-drawn one —
+than from memory of every move. This cuts against the current player's premise (§4
+of the main spec) that the model is given as little help as possible and must
+maintain board state itself; an image-fed player trades that memory/inference test
+for a visual-reasoning one, so it would likely need to be its own player type rather
+than a mode of this one. Undesigned: the rendering format, whether the textual move
+history is dropped or kept alongside the image, and how self-assessment and fault
+detection change once the model no longer has to derive state at all.
