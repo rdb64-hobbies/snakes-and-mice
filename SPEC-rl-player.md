@@ -9,13 +9,14 @@
 > decided or measured so far — the goal, the overall training strategy, the
 > investigation into whether that strategy's premise holds (it does; see "Result"
 > below), what the mistakes actually look like (a side-dependent column bias and
-> an apparent diagonal blind spot — see "What the mistakes look like" below), and
-> a follow-up finding that simultaneous threats are harder to defend than one
-> (see "A second lever" below), which sharpens a training-strategy requirement
-> without yet deciding how to meet it. It deliberately does **not** cover the
-> training algorithm, any model or network architecture, or the exact form the
-> "mistake model" (§"Training strategy" below) will take — none of that
-> has been decided yet, and this document will grow to cover it once it is.
+> an apparent diagonal blind spot — see "What the mistakes look like" below), a
+> follow-up finding that simultaneous threats are harder to defend than one (see
+> "A second lever" below), and the mistake model's form — a hand-crafted score
+> over the features those findings identified, doubling as both a reward-shaping
+> potential and the ranking function for targeted data collection (see "The
+> mistake model" below). It deliberately does **not** cover the training
+> algorithm or any network/function-approximator architecture — neither has been
+> decided yet, and this document will grow to cover them once they are.
 
 ## Goal
 
@@ -92,12 +93,10 @@ resource deliberately rather than burning it as ordinary training volume.
    one round of data collection as final.
 
 **Explicitly undecided**, and out of scope for this document until settled: the RL
-algorithm itself, any network or function-approximator architecture, and the exact
-form the mistake model takes (what it's fit on, what class of model it is, how
-"mixing it into training" works mechanically in step 5) — including, now
-concretely rather than speculatively (§"A second lever," below), how progress
-toward a rare, high-value intermediate state gets rewarded before any terminal
-win/loss.
+algorithm itself and any network or function-approximator architecture. The
+mistake model's form, and how it rewards progress toward a rare, high-value
+intermediate state before any terminal win/loss, turned out to be one decision
+rather than two — see "The mistake model," below.
 
 ## Finding out whether the premise holds
 
@@ -298,3 +297,61 @@ something like "how many live simultaneous threats do I hold" as a running signa
 without provably changing what the optimal policy is — but which mechanism is
 actually used is a decision for when the training algorithm itself is chosen, not
 before.
+
+## The mistake model
+
+Two of "Training strategy"'s undecided items — the exact form the mistake model
+takes, and how to reward progress toward a rare, high-value intermediate state
+(§"A second lever," above) — turn out to be one decision, not two.
+
+### Decided: a hand-crafted, feature-based score, not a learned model
+
+The mistake model is a **scoring function over board features**, not a trained
+classifier. Every finding so far has come with a mechanism, not just a
+correlation — a diagonal's cells share no lexical cue at all, a column's shared
+digit is harder to notice than a row's shared letter, and a threat set gets
+missed specifically when defending it can't be done with one aligned two-piece
+move. A formula built directly from those mechanisms already encodes as much of
+what is known as a learned model plausibly could without more data than exists,
+and without risking a fit to `qwen-3-8-rtx`'s specific noise rather than whatever
+of it is actually shared across models (the "Breadth is open" goal, above). It is
+also automatically "generalizing" in the sense step 4 of the loop already
+requires: it is a function of structure, computable at any position, not a
+lookup table.
+
+### Candidate features, ranked by how much evidence currently supports them
+
+1. **A live diagonal threat.** The strongest, most model-general signal found so
+   far (§"What the mistakes look like," above) — no lexical cue links a
+   diagonal's five cells at all.
+2. **A threat set that cannot be covered by one aligned two-piece move.** This is
+   the feature the double-threat result actually validated (§"A second lever,"
+   above) — not "two threats" as such, but specifically two threats whose
+   defense requires splitting across two lines, exactly where the alignment bias
+   fails.
+3. **A column threat against a Mouse-side defender specifically.** The column
+   bias only held clearly for one side; a column threat against Snake isn't yet
+   evidenced as any more dangerous than a row.
+
+None of the actual weights or thresholds are decided here — only that these are
+the features worth starting from, in roughly this order of evidential strength.
+
+### Two roles, one function
+
+The same score serves both remaining open items at once:
+
+- As a **potential function** for potential-based reward shaping — added to the
+  terminal reward in the standard `γΦ(s') − Φ(s)` form, which provably leaves the
+  optimal policy unchanged while giving a per-move signal that directly reinforces
+  building toward the configurations already shown to be hard to defend.
+- As the **ranking function for step 3** of the loop ("densify") — which
+  constructed positions are worth spending a live-LLM query on, rather than
+  probing uniformly.
+
+### Must be validated, not trusted on theory
+
+Before this is relied on for either role, the formula needs the same treatment
+the double-threat claim got: construct matched positions that vary only in what
+the score predicts, and check the mistake rate actually tracks it —
+`tools/probe_multi_threats.py` is the existing pattern to extend for this — not
+accepted because the mechanism sounds right.
