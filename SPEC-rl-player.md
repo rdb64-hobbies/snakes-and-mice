@@ -6,12 +6,16 @@
 > as planned in §3.
 
 > **Status: early, partial draft.** This document covers what has actually been
-> decided or measured so far — the goal, the overall training strategy, and the
+> decided or measured so far — the goal, the overall training strategy, the
 > investigation into whether that strategy's premise holds (it does; see "Result"
-> below). It deliberately does **not** cover the training algorithm, any model or
-> network architecture, or the exact form the "mistake model" (§"Training strategy"
-> below) will take — none of that has been decided yet, and this document will grow
-> to cover it once it is.
+> below), what the mistakes actually look like (a side-dependent column bias and
+> an apparent diagonal blind spot — see "What the mistakes look like" below), and
+> a follow-up finding that simultaneous threats are harder to defend than one
+> (see "A second lever" below), which sharpens a training-strategy requirement
+> without yet deciding how to meet it. It deliberately does **not** cover the
+> training algorithm, any model or network architecture, or the exact form the
+> "mistake model" (§"Training strategy" below) will take — none of that
+> has been decided yet, and this document will grow to cover it once it is.
 
 ## Goal
 
@@ -90,7 +94,10 @@ resource deliberately rather than burning it as ordinary training volume.
 **Explicitly undecided**, and out of scope for this document until settled: the RL
 algorithm itself, any network or function-approximator architecture, and the exact
 form the mistake model takes (what it's fit on, what class of model it is, how
-"mixing it into training" works mechanically in step 5).
+"mixing it into training" works mechanically in step 5) — including, now
+concretely rather than speculatively (§"A second lever," below), how progress
+toward a rare, high-value intermediate state gets rewarded before any terminal
+win/loss.
 
 ## Finding out whether the premise holds
 
@@ -159,3 +166,135 @@ roughly one per ten games they are frequent enough to collect. The strategy abov
 is worth pursuing. What is *not* yet established is the premise it actually rests
 on — that these mistakes are **systematic**, not scattered — which needs many more
 of them than four, and is what the collected file is for.
+
+## What the mistakes look like
+
+Two more characterizations of `qwen-3-8-rtx`'s mistakes, beyond that they exist —
+both bear directly on what a mistake model (§"Training strategy," step 4) would
+need to represent.
+
+### Which line the opponent wins on depends on which side is playing
+
+Measured 2026-09-13 against 552 recorded mistakes, by which of the 12 lines the
+missed threat sat on:
+
+| Side (n) | column | row | diagonal |
+|---|---:|---:|---:|
+| Mouse (269) | 67% | 22% | 7% |
+| Snake (283) | 45% | 37% | 11% |
+
+Column-dominant play only holds clearly on **one** side. An earlier, smaller-sample
+read (pooling both sides, ~80% column) turned out to be mostly the Mouse-side
+effect showing through — Snake-side was closer to an even row/column split all
+along, just under-sampled. **Side matters here for the same reason SPEC.md §6
+already treats it as a first-class axis for the tournament standings**: pooling
+across sides risks reporting a side-specific effect as if it were general, and a
+mistake model trained on pooled data would learn the wrong thing for whichever side
+it under-represents.
+
+### Diagonals appear to not be checked as a category at all
+
+Two pieces of evidence, not yet a fully separate measurement: a diagonal miss on an
+almost-empty board, and the same diagonal ignored by two different models across
+four consecutive turns of one game.
+
+`gpt-5-6-terra`, defending as Snake with only 7 pieces on the whole board (Mouse:
+`A5`, `D1`, `D2`, `E1`; Snake: `B5`, `C5`, `D5` plus the seed), played `C1 C2` while
+the anti-diagonal (`A5`, `B4`, `C3`, `D2`, `E1`) already held three Mouse pieces
+with both `B4` and `C3` completely open (`0 → -996`). At 7 pieces there is nothing
+to lose track of — this looks less like a tracking failure than like the diagonal
+never being checked at all.
+
+A cross-model game makes the same point more sharply. In one `gemma-4-dgx`
+(Mouse) vs. `qwen-3-8-rtx` (Snake) game, seed `D1`, the main diagonal (`A1`, `B2`,
+`C3`, `D4`, `E5`) reached three Mouse pieces (`A1`, `C3`, `D4`, gaps `B2`/`E5`) by
+turn 4 and was still exactly as open after **four consecutive turns**:
+
+- Turn 4 (Snake, qwen): plays `C5 B5` — doesn't touch `B2`/`E5`. Fails to block.
+  `0 → -996`.
+- Turn 5 (Mouse, gemma): the win is sitting there; plays `A5 B4` instead. Fails to
+  take it. `996 → 0`.
+- Turn 6 (Snake, qwen): the diagonal is still untouched by anyone; plays `A4 E4`.
+  Fails to block again. `0 → -994`.
+- Turn 7 (Mouse, gemma): plays `E1 B1`. Fails to take it again. `994 → 0`.
+
+```
+  1  2  3  4  5
+A 🐭 ·  ·  🐍 🐭
+B 🐍 ·  ·  🐭 🐍
+C ·  🐭 🐭 ·  🐍
+D 🐍 🐍 🐍 🐭 ·
+E 🐍 ·  ·  🐍 ·
+```
+
+`B2` and `E5` — after four moves by two different models — are still both empty.
+Neither the side that would win by completing the diagonal nor the side that would
+lose by ignoring it ever engaged with it. A row shares a letter across its five
+cells and a column shares a digit; a diagonal shares neither, so there is no
+lexical cue to catch it while reconstructing the board from a move history alone
+(SPEC.md §4). If this generalizes, it would be a stronger and more model-general
+target than the column bias, which requires only *uneven* attention to rows and
+columns — this would mean one whole category of line getting no attention by
+default.
+
+## A second lever: simultaneous threats
+
+The training strategy above assumes creating one three-piece live line is
+something a policy could learn to reach for — win/loss reward alone should
+reinforce it, since it is already what causes a mistake in "Result," above. A
+natural next question: does creating **two** simultaneous three-piece threats work
+better, on the theory that tracking two developing threats at once is harder than
+tracking one? That is a claim about attention, not about the game tree — even
+against a fallible defender, two threats each needing one more cell are still
+blockable in a single two-piece move, unless there are three or more.
+
+### Measured 2026-09-13, against `qwen-3-8-rtx`
+
+Four matched pairs of hand-built positions (`tools/probe_multi_threats.py`) — same
+defender, same total piece count, one live three-piece threat versus two crossing
+at a shared cell — put the model on move as the defender and checked whether its
+move touched every threatened line.
+
+- **Single-threat: 4 of 4 fully defended. Double-threat: 2 of 4.** Perfect defense
+  collapses to a coin flip the moment there is a second thing to track, on
+  positions otherwise matched.
+- **Both misses share one mechanism**, and it is the one already visible in
+  ordinary mistakes: of 126 mistakes recorded across four LLM roster players as of
+  2026-09-08, 108 (86%) placed both cells of the move in the same row or column,
+  against a ~37% baseline for picking two empty cells at random at that point in
+  the game. Both failures here were themselves same-line pairs — one used both
+  cells to (redundantly) block the threat it happened to be aligned with while
+  leaving the second threat untouched; the other's pair blocked one threat with
+  one cell and spent the other on a cell that helped neither. A defender that
+  treated each placed piece as answering an independent tactical question would
+  naturally split across two unrelated lines; a default habit of extending along
+  one line cannot.
+
+Four positions per condition is a real result, not a settled one — but the
+mechanism appearing identically in both failures is more convincing than the count
+alone, and it makes a specific, checkable prediction: a model with less of the
+alignment habit should also show a smaller single-vs-double gap.
+
+### Implication for the training strategy: reward is sparse exactly where the signal is rare
+
+This sharpens something the training strategy (above) was already exposed to but
+did not name. Step 5 mixes a mistake model into training so the policy learns to
+exploit found bias — but a terminal win/loss reward correlates only weakly with
+having *created* the intermediate state that caused the win, and worst of all for
+a state that is itself rare. A single three-piece threat is common in ordinary
+play (self-play, `random`, `perfect` opponents) and would turn up often enough for
+a terminal-reward signal to reinforce it. **A deliberately engineered second
+threat, crossing the first at a chosen cell, is not something self-play naturally
+produces at any useful rate** — so the exact lever this section just confirmed
+works is also the one a sparse terminal reward is least equipped to teach a policy
+to reach for.
+
+This is not solved here — the training algorithm remains explicitly undecided
+(above) — but the requirement is now concrete rather than speculative: **whatever
+training approach is chosen needs an answer for rewarding progress toward a rare,
+high-value intermediate state, not only the terminal win or loss.** Potential-based
+reward shaping is the standard tool for this shape of problem — it can reward
+something like "how many live simultaneous threats do I hold" as a running signal
+without provably changing what the optimal policy is — but which mechanism is
+actually used is a decision for when the training algorithm itself is chosen, not
+before.
