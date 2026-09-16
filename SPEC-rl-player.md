@@ -8,11 +8,12 @@
 > **Status: early, partial draft.** This document covers what has actually been
 > decided or measured so far — the goal, the overall training strategy, the
 > investigation into whether that strategy's premise holds (it does; see "Result"
-> below), what the mistakes actually look like (a side-dependent column bias and
-> an apparent diagonal blind spot — see "What the mistakes look like" below), a
-> follow-up finding that simultaneous threats are harder to defend than one (see
-> "A second lever" below), and the mistake model's form — a hand-crafted score
-> over the features those findings identified, doubling as both a reward-shaping
+> below), what the mistakes look like (an initial column/diagonal read that a
+> later controlled test did not support — see "What the mistakes look like"
+> below for both the finding and its retraction), a follow-up finding that
+> simultaneous threats are harder to defend than one (see "A second lever"
+> below), and the mistake model's form — a hand-crafted score, now built on the
+> one feature with controlled support, doubling as both a reward-shaping
 > potential and the ranking function for targeted data collection (see "The
 > mistake model" below). It deliberately does **not** cover the training
 > algorithm or any network/function-approximator architecture — neither has been
@@ -191,23 +192,33 @@ across sides risks reporting a side-specific effect as if it were general, and a
 mistake model trained on pooled data would learn the wrong thing for whichever side
 it under-represents.
 
-### Diagonals appear to not be checked as a category at all
+**Caveat, sharpened by the controlled result below: this is a breakdown of
+failures only, not a per-opportunity rate.** It says what fraction of qwen's rare
+mistakes involved a column, not what fraction of column threats get missed —
+there is no denominator here for how many column, row, or diagonal threats arose
+in total, most of them presumably defended without incident. A line type can
+dominate this table simply by coming up as a threat more often in ordinary play,
+with no per-opportunity effect at all. See "Isolated single threats are almost
+never missed," below, which measures the rate this table cannot.
 
-Two pieces of evidence, not yet a fully separate measurement: a diagonal miss on an
-almost-empty board, and the same diagonal ignored by two different models across
-four consecutive turns of one game.
+### Diagonals: two vivid anecdotes, not a category effect (revised 2026-09-16)
+
+**The strong claim originally drawn here — that diagonals are not checked as a
+category at all — is retracted below.** The two anecdotes are real and are kept
+as recorded; the generalization drawn from them was not tested against a
+controlled comparison at the time, and the controlled comparison built afterward
+does not support it.
 
 `gpt-5-6-terra`, defending as Snake with only 7 pieces on the whole board (Mouse:
 `A5`, `D1`, `D2`, `E1`; Snake: `B5`, `C5`, `D5` plus the seed), played `C1 C2` while
 the anti-diagonal (`A5`, `B4`, `C3`, `D2`, `E1`) already held three Mouse pieces
-with both `B4` and `C3` completely open (`0 → -996`). At 7 pieces there is nothing
-to lose track of — this looks less like a tracking failure than like the diagonal
-never being checked at all.
+with both `B4` and `C3` completely open (`0 → -996`).
 
-A cross-model game makes the same point more sharply. In one `gemma-4-dgx`
-(Mouse) vs. `qwen-3-8-rtx` (Snake) game, seed `D1`, the main diagonal (`A1`, `B2`,
-`C3`, `D4`, `E5`) reached three Mouse pieces (`A1`, `C3`, `D4`, gaps `B2`/`E5`) by
-turn 4 and was still exactly as open after **four consecutive turns**:
+A cross-model game makes the same shape of failure more sharply. In one
+`gemma-4-dgx` (Mouse) vs. `qwen-3-8-rtx` (Snake) game, seed `D1`, the main
+diagonal (`A1`, `B2`, `C3`, `D4`, `E5`) reached three Mouse pieces (`A1`, `C3`,
+`D4`, gaps `B2`/`E5`) by turn 4 and was still exactly as open after **four
+consecutive turns**:
 
 - Turn 4 (Snake, qwen): plays `C5 B5` — doesn't touch `B2`/`E5`. Fails to block.
   `0 → -996`.
@@ -227,14 +238,40 @@ E 🐍 ·  ·  🐍 ·
 ```
 
 `B2` and `E5` — after four moves by two different models — are still both empty.
-Neither the side that would win by completing the diagonal nor the side that would
-lose by ignoring it ever engaged with it. A row shares a letter across its five
-cells and a column shares a digit; a diagonal shares neither, so there is no
-lexical cue to catch it while reconstructing the board from a move history alone
-(SPEC.md §4). If this generalizes, it would be a stronger and more model-general
-target than the column bias, which requires only *uneven* attention to rows and
-columns — this would mean one whole category of line getting no attention by
-default.
+Neither side ever engaged with it. At the time this read as a plausible
+mechanism: a row shares a letter across its cells and a column shares a digit, a
+diagonal shares neither, so there is no lexical cue to catch it while
+reconstructing the board from a move history alone (SPEC.md §4). **What these two
+anecdotes actually demonstrate, given the controlled result below, is not that
+diagonals go unchecked — it is that something else was going on in both games**
+(accumulated move history, or the same multi-threat mechanism §"A second lever"
+describes) that happened to land on a diagonal both times. Two instances drawn
+from real games, without a matched comparison, is not enough to tell "diagonals
+are structurally invisible" apart from "rare failures land on all line types, and
+these two happened to be memorable."
+
+### Isolated single threats are almost never missed, regardless of line type
+
+Measured 2026-09-16 against `qwen-3-8-rtx`, using `tools/probe_line_types.py`: 12
+matched positions, one live three-piece threat each — a row, a column, or a
+diagonal, two replicates of each, for both defending sides, all at the same
+total piece count within a side (9 for Mouse, 11 for Snake).
+
+**12 of 12 fully defended.** Every row, every column, every diagonal, on both
+sides. This is the first time any of these findings measured a true
+per-opportunity rate rather than a breakdown of existing failures, and it says a
+lone, freshly-presented threat of any line type is defended reliably — consistent
+with the tiny overall mistake rate from "Result," above (4 of 188 graded moves).
+
+This reframes both of the findings above rather than simply adding to them. The
+column-dominant failure breakdown and the two diagonal anecdotes were never shown
+to be *line-type* effects as such; what actually degrades performance, on the
+only controlled comparison run so far, is a second simultaneous threat that can't
+be covered by one aligned move (§"A second lever" — 4 of 4 single-threat positions
+defended there too, dropping to 2 of 4 once a second threat was added, using the
+same method as this probe). The evidence now points at **how much else is
+competing for attention when a threat appears**, not at which of the 12 lines it
+happens to sit on. The mistake model (below) is revised accordingly.
 
 ## A second lever: simultaneous threats
 
@@ -307,34 +344,43 @@ takes, and how to reward progress toward a rare, high-value intermediate state
 ### Decided: a hand-crafted, feature-based score, not a learned model
 
 The mistake model is a **scoring function over board features**, not a trained
-classifier. Every finding so far has come with a mechanism, not just a
-correlation — a diagonal's cells share no lexical cue at all, a column's shared
-digit is harder to notice than a row's shared letter, and a threat set gets
-missed specifically when defending it can't be done with one aligned two-piece
-move. A formula built directly from those mechanisms already encodes as much of
-what is known as a learned model plausibly could without more data than exists,
-and without risking a fit to `qwen-3-8-rtx`'s specific noise rather than whatever
-of it is actually shared across models (the "Breadth is open" goal, above). It is
-also automatically "generalizing" in the sense step 4 of the loop already
-requires: it is a function of structure, computable at any position, not a
-lookup table.
+classifier. A formula built directly from a validated mechanism already encodes
+as much of what is known as a learned model plausibly could without more data
+than exists, and without risking a fit to `qwen-3-8-rtx`'s specific noise rather
+than whatever of it is actually shared across models (the "Breadth is open"
+goal, above). It is also automatically "generalizing" in the sense step 4 of the
+loop already requires: it is a function of structure, computable at any
+position, not a lookup table.
 
-### Candidate features, ranked by how much evidence currently supports them
+### Candidate features, revised 2026-09-16
 
-1. **A live diagonal threat.** The strongest, most model-general signal found so
-   far (§"What the mistakes look like," above) — no lexical cue links a
-   diagonal's five cells at all.
-2. **A threat set that cannot be covered by one aligned two-piece move.** This is
-   the feature the double-threat result actually validated (§"A second lever,"
-   above) — not "two threats" as such, but specifically two threats whose
-   defense requires splitting across two lines, exactly where the alignment bias
-   fails.
-3. **A column threat against a Mouse-side defender specifically.** The column
-   bias only held clearly for one side; a column threat against Snake isn't yet
-   evidenced as any more dangerous than a row.
+The line-type features originally listed here — a live diagonal threat, a
+column threat against a Mouse-side defender — are **removed**, not merely
+reordered. Both were breakdowns of rare failures with no per-opportunity
+denominator, and the controlled test built to check them
+(§"Isolated single threats are almost never missed") found no effect: 12 of 12
+single threats defended, evenly across every line type and both sides. Reusing
+either as a feature now would mean scoring positions on evidence the newer,
+better-controlled measurement didn't support — see the retraction in "Diagonals:
+two vivid anecdotes, not a category effect."
 
-None of the actual weights or thresholds are decided here — only that these are
-the features worth starting from, in roughly this order of evidential strength.
+That leaves one feature with controlled support:
+
+1. **A threat set that cannot be covered by one aligned two-piece move.** The
+   only feature with a matched, controlled result behind it (§"A second lever"):
+   4 of 4 single-threat positions fully defended, 2 of 4 once a second threat
+   requiring a split response was added — using the identical method that then
+   found *no* degradation from line type alone.
+
+This is now a list of one, which is a smaller and more confident starting point
+than three ranked guesses. It does not close the door on line type mattering —
+only on the specific claims made here without a controlled test. If further
+probing turns up a line-type or side-dependent effect that survives the same
+matched-position treatment, it belongs back in this list on that basis, not on a
+failure-breakdown alone.
+
+None of the actual weights or thresholds are decided here — only that this is
+the feature worth starting from.
 
 ### Two roles, one function
 

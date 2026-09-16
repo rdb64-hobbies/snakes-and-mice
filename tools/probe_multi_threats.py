@@ -36,88 +36,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
 
-from snakes_and_mice.board import LINES
 from snakes_and_mice.cli_common import make_player
-from snakes_and_mice.core import Cell, Move, Side
-from snakes_and_mice.players import Player
+from snakes_and_mice.core import Side
 from snakes_and_mice.roster import ConfigError, Roster, load_environment, load_roster
 
-
-@dataclass(frozen=True)
-class Scenario:
-    """A hand-built position, validated at import time (see `_validate`)."""
-
-    name: str
-    defender: Side
-    seed: str
-    mouse_cells: frozenset[str]
-    snake_cells: frozenset[str]  # includes the seed
-
-
-def _line_labels() -> tuple[frozenset[str], ...]:
-    return tuple(frozenset(cell.label for cell in line) for line in LINES)
-
-
-_LINES: tuple[frozenset[str], ...] = _line_labels()
-
-
-def _live_threats(
-    mouse: frozenset[str], snake: frozenset[str], owner: Side
-) -> list[frozenset[str]]:
-    """Lines where `owner` holds >=3 cells and the other side holds none."""
-    theirs, ours = (snake, mouse) if owner is Side.SNAKE else (mouse, snake)
-    return [
-        line for line in _LINES if len(line & theirs) >= 3 and not (line & ours)
-    ]
-
-
-def _validate(s: Scenario) -> list[frozenset[str]]:
-    """The defender's threats to defend against, or raise if the scenario is
-    unsound (a completed line, an extra threat, a defender who could also just
-    win, or an occupancy no alternating sequence could reach)."""
-    attacker = s.defender.other
-    if any(len(line & s.mouse_cells) == 5 or len(line & s.snake_cells) == 5
-           for line in _LINES):
-        raise ValueError(f"{s.name}: a line is already complete")
-    if _live_threats(s.mouse_cells, s.snake_cells, s.defender):
-        raise ValueError(f"{s.name}: defender already has a winning line of its own")
-    threats = _live_threats(s.mouse_cells, s.snake_cells, attacker)
-    if not threats:
-        raise ValueError(f"{s.name}: attacker has no threat at all")
-
-    mouse_n, snake_extra = len(s.mouse_cells), len(s.snake_cells) - 1
-    if mouse_n % 2 or snake_extra % 2:
-        raise ValueError(f"{s.name}: an odd cell count -- moves place two at a time")
-    expected_gap = 0 if s.defender is Side.MOUSE else 2
-    if mouse_n - snake_extra != expected_gap:
-        raise ValueError(
-            f"{s.name}: {mouse_n} mouse / {snake_extra} snake-beyond-seed cells "
-            f"cannot reach a {s.defender.value}-to-move position"
-        )
-    return threats
-
-
-def _replay_sequence(
-    mouse_cells: frozenset[str], snake_cells: frozenset[str], seed: str
-) -> list[tuple[Side, tuple[str, ...]]]:
-    """One alternating, Mouse-first sequence reaching this occupancy.
-
-    Order within a side never matters for the final position (§ module
-    docstring: no intermediate state can complete a line the final one
-    doesn't), so cells are just consumed in sorted order.
-    """
-    mouse_left = sorted(mouse_cells)
-    snake_left = sorted(c for c in snake_cells if c != seed)
-    moves: list[tuple[Side, tuple[str, ...]]] = []
-    while mouse_left or snake_left:
-        if mouse_left:
-            moves.append((Side.MOUSE, (mouse_left.pop(0), mouse_left.pop(0))))
-        if snake_left:
-            moves.append((Side.SNAKE, (snake_left.pop(0), snake_left.pop(0))))
-    return moves
-
+from threat_scenarios import Scenario, run
 
 # --- Scenarios --------------------------------------------------------------
 #
@@ -180,18 +104,6 @@ SCENARIOS: tuple[Scenario, ...] = (
         snake_cells=frozenset({"B1", "C4", "E1", "E2", "E5"}),
     ),
 )
-
-
-def run(player: Player, s: Scenario) -> tuple[Move, list[frozenset[str]], list[bool]]:
-    """Replay `s` into `player`, take its move, and check every threat."""
-    threats = _validate(s)
-    player.start_game(s.defender, Cell.from_label(s.seed))
-    for side, labels in _replay_sequence(s.mouse_cells, s.snake_cells, s.seed):
-        move = Move.of(*(Cell.from_label(label) for label in labels))
-        player.observe_move(side, move)
-    choice = player.choose_move()
-    played: frozenset[str] = frozenset(c.label for c in choice.move.cells)
-    return choice.move, threats, [bool(t & played) for t in threats]
 
 
 def main(argv: list[str] | None = None) -> None:
