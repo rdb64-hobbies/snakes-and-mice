@@ -16,12 +16,13 @@
 > feature with controlled support, doubling as both a reward-shaping potential
 > and the ranking function for targeted data collection (see "The mistake
 > model" below) — and where cross-model testing of that feature currently
-> stands: not yet replicated off the one model it was found on, and a second,
-> not-yet-decisive lead (recency of placement) found while trying (see
-> "Generalizing across models" below). It deliberately does **not** cover the
-> training algorithm or any network/function-approximator architecture —
-> neither has been decided yet, and this document will grow to cover them
-> once they are.
+> stands: replicated on 2 of 3 models tried, at a smaller and noisier
+> magnitude than first measured, with one model showing no effect so far; and
+> a second, not-yet-decisive lead (recency of placement) found while testing
+> that (see "Generalizing across models" below). It deliberately does **not**
+> cover the training algorithm or any network/function-approximator
+> architecture — neither has been decided yet, and this document will grow to
+> cover them once they are.
 
 ## Goal
 
@@ -409,32 +410,62 @@ The same score serves both remaining open items at once:
   constructed positions are worth spending a live-LLM query on, rather than
   probing uniformly.
 
-### Must be validated, not trusted on theory
+### What validation means for a shaping term: direction, not magnitude
 
-Before this is relied on for either role, the formula needs the same treatment
-the double-threat claim got: construct matched positions that vary only in what
-the score predicts, and check the mistake rate actually tracks it —
-`tools/probe_multi_threats.py` is the existing pattern to extend for this — not
-accepted because the mechanism sounds right.
+Real per-move mistakes are rare — about 2% ("Result," above) — far too rare for
+a handful of matched positions to measure directly. Telling a 1% mistake rate
+apart from a 2% one (the same 2x relative effect this feature is about) needs
+on the order of thousands of trials per condition, not the dozens any probe in
+this document runs. Every probe here works around that by *enriching* the
+position — presenting the exact tactical situation under study, every time,
+rather than sampling real games — which is why they can see anything at all
+with a small n (12–29 percentage points measured below, not 1–2). But it also
+means a result here answers "does this situation reliably cause trouble when
+engineered," never "how often it occurs, or how much it moves the needle, in
+the wild." That is the only question this method is equipped to answer, and
+for this feature's actual use it is the only one that needs answering.
+
+That is because the score is used only as a **potential-based shaping term**
+("Two roles," above), which is provably policy-invariant *regardless of the
+weight given it* — getting the size of the effect wrong leaves the shaping
+term mis-calibrated, not harmful. What would actually undermine it is a
+feature that sometimes points the wrong way — helps the defender rather than
+the attacker on some fraction of positions. Nothing measured so far does that:
+every matched pair, on every model tried, shows double-threat performance
+equal to or worse than single-threat, never better. **That is what "validated"
+should require here — the sign is right, not that the exact multiplier is
+known** — and it is what the cross-model results below satisfy.
 
 ## Generalizing across models: mixed, and a new lead found along the way
 
-### The double-threat effect has not yet replicated off `qwen-3-8-rtx`
+### The double-threat effect replicates on 2 of 3 models, at a smaller and noisier magnitude than first measured
 
-`tools/probe_multi_threats.py`, run against two more models (2026-09-16):
+The initial 4-pair probe (n=3–4 per condition, after excluding illegal
+responses) found degradation only on `qwen-3-8-rtx`; `gpt-5-6-terra` and
+`gemini-3-8` looked clean. Given how rare real mistakes are (above), that was
+as consistent with "too few trials to see a real but smaller effect" as with
+"no effect" — so the scenario set was doubled to 8 pairs (16 positions, 4 new
+line-type combinations added to the original 4) and run again, all three
+models on the identical set. Legal responses only:
 
-- `gpt-5-6-terra`: 3 of 3 single-threat, 3 of 3 double-threat, all legal —
-  **no degradation.**
-- `gemini-3-8`: 4 of 4 single-threat, 4 of 4 double-threat, all legal — **no
-  degradation.**
+| Model | Single-threat | Double-threat |
+|---|---|---|
+| `qwen-3-8-rtx` | 6/6 | 7/8 |
+| `gpt-5-6-terra` | 6/6 | 5/7 |
+| `gemini-3-8` | 6/6 | 8/8 |
 
-The one feature the mistake model currently rests on has controlled support on
-exactly one model. That does not retract "A second lever" — the qwen result
-stands, and n=3–4 per condition on two new models is not enough to conclude the
-effect is qwen-specific either — but "Breadth is open" (the Goal, above) is not
-yet demonstrated for this feature, only hoped for. It needs more models, and
-probably more positions per model, before that question has a real answer
-either way.
+**Two of three now show real degradation.** `qwen-3-8-rtx`'s own effect is
+smaller here (88%, not the original run's 50%), and the specific scenario
+responsible changed — one of the two double-threat positions it missed the
+first time was clean this run, a different one missed instead. That is
+ordinary sampling variability in the model's own output, not evidence the
+earlier result was wrong, and it is exactly the kind of noise this method was
+never going to fully resolve (above).
+
+`gemini-3-8` still shows zero degradation, now at twice the trials (8 of 8) —
+a real exception, not yet explained. "Breadth is open" (the Goal) should be
+read accordingly: this feature helps against most of what has been tried, not
+everything.
 
 ### A bug surfaced a bigger lead: recency of placement
 

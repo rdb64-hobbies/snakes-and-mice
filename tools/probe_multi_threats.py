@@ -46,14 +46,18 @@ from threat_scenarios import Scenario, run
 
 # --- Scenarios --------------------------------------------------------------
 #
-# Four matched pairs: two with Mouse defending, two with Snake defending (the
-# side split matters -- qwen-3-8-rtx's own threat-type bias turned out to
+# Eight matched pairs: four with Mouse defending, four with Snake defending
+# (the side split matters -- qwen-3-8-rtx's own threat-type bias turned out to
 # differ sharply by side). Each pair's single- and double-threat halves share
 # the same defender and the same total piece count. The double half's two
 # threats always cross at one shared cell (the natural shape a real double
 # threat takes -- two lines built through a common point) and mix line types
-# (row+column, column+diagonal, ...) rather than repeating the row/column bias
-# already found, since that is a separate effect this probe is not about.
+# (row+column, column+diagonal, diagonal+column, ...) rather than repeating
+# the row/column bias already found, since that is a separate effect this
+# probe is not about. The last four pairs (added 2026-09-16) were built
+# specifically to widen cross-model testing beyond the original four, whose
+# generalization off qwen-3-8-rtx (SPEC-rl-player.md, "Generalizing across
+# models") is not yet established at n=4.
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(  # single: Snake holds row C, Mouse to defend
@@ -103,6 +107,54 @@ SCENARIOS: tuple[Scenario, ...] = (
         Side.SNAKE, "E1",
         mouse_cells=frozenset({"A1", "A2", "A3", "B3", "C3", "E4"}),
         snake_cells=frozenset({"B1", "C4", "E1", "E2", "E5"}),
+    ),
+    Scenario(  # single: Snake holds column 1, Mouse to defend
+        "mouse-defends-single-col1",
+        Side.MOUSE, "A1",
+        mouse_cells=frozenset({"A4", "B2", "C2", "E4"}),
+        snake_cells=frozenset({"A1", "A5", "B1", "B5", "C1"}),
+    ),
+    Scenario(  # double: Snake holds column 1 AND the main diagonal, sharing A1
+        "mouse-defends-double-col1-diag",
+        Side.MOUSE, "A1",
+        mouse_cells=frozenset({"B3", "C5", "D5", "E2"}),
+        snake_cells=frozenset({"A1", "B1", "B2", "C1", "C3"}),
+    ),
+    Scenario(  # single: Mouse holds row E, Snake to defend
+        "snake-defends-single-rowE",
+        Side.SNAKE, "A1",
+        mouse_cells=frozenset({"A4", "B1", "B5", "E3", "E4", "E5"}),
+        snake_cells=frozenset({"A1", "A5", "B4", "C4", "D1"}),
+    ),
+    Scenario(  # double: Mouse holds row E AND the main diagonal, sharing E5
+        "snake-defends-double-rowE-diag",
+        Side.SNAKE, "A1",
+        mouse_cells=frozenset({"A4", "C3", "D4", "E3", "E4", "E5"}),
+        snake_cells=frozenset({"A1", "A5", "C2", "D1", "D2"}),
+    ),
+    Scenario(  # single: Snake holds the anti-diagonal, Mouse to defend
+        "mouse-defends-single-diag2",
+        Side.MOUSE, "B4",
+        mouse_cells=frozenset({"A3", "B1", "C1", "E4"}),
+        snake_cells=frozenset({"A4", "B4", "B5", "D2", "E1"}),
+    ),
+    Scenario(  # double: Snake holds the anti-diagonal AND column 4, sharing B4
+        "mouse-defends-double-diag-col4",
+        Side.MOUSE, "B4",
+        mouse_cells=frozenset({"B2", "C5", "D5", "E2"}),
+        snake_cells=frozenset({"B4", "C4", "D2", "D4", "E1"}),
+    ),
+    Scenario(  # single: Mouse holds column 5, Snake to defend
+        "snake-defends-single-col5",
+        Side.SNAKE, "B1",
+        mouse_cells=frozenset({"A3", "A5", "B2", "B5", "C2", "C5"}),
+        snake_cells=frozenset({"A4", "B1", "C1", "D2", "D4"}),
+    ),
+    Scenario(  # double: Mouse holds column 5 AND the anti-diagonal, sharing A5
+        "snake-defends-double-col5-diag",
+        Side.SNAKE, "B1",
+        mouse_cells=frozenset({"A5", "B4", "B5", "C3", "C5", "E4"}),
+        snake_cells=frozenset({"A4", "B1", "D1", "D4", "E2"}),
     ),
 )
 
