@@ -26,6 +26,7 @@ from collections import defaultdict
 
 from snakes_and_mice.cli_common import make_player
 from snakes_and_mice.core import Side
+from snakes_and_mice.faults import MoveUnavailable
 from snakes_and_mice.roster import ConfigError, Roster, load_environment, load_roster
 
 from threat_scenarios import Scenario, line_kind, run
@@ -134,22 +135,36 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(str(exc))
 
     tally: dict[tuple[Side, str], list[bool]] = defaultdict(list)
+    illegal: list[Scenario] = []
     for s in SCENARIOS:
         player = make_player(args.llm, s.defender, roster, log_dir=None)
-        move, threats, hits = run(player, s)
-        assert len(threats) == 1, f"{s.name}: expected exactly one threat"
-        ok = hits[0]
-        kind = line_kind(threats[0])
+        try:
+            r = run(player, s)
+        except MoveUnavailable as exc:
+            print(f"{s.name:24s} FAULT (excluded): {exc.reason.name} -- {exc}")
+            continue
+        assert len(r.threats) == 1, f"{s.name}: expected exactly one threat"
+        if not r.legal:
+            illegal.append(s)
+            print(f"{s.name:24s} played {r.move}: ILLEGAL -- reoccupied a cell")
+            continue
+        ok = r.hits[0]
+        kind = line_kind(r.threats[0])
         tally[(s.defender, kind)].append(ok)
-        print(f"{s.name:24s} played {move}: {'OK' if ok else 'MISSED'}")
+        print(f"{s.name:24s} played {r.move}: {'OK' if ok else 'MISSED'}")
 
     print()
     for side in (Side.MOUSE, Side.SNAKE):
         parts = []
         for kind in ("row", "col", "diag"):
             results = tally[(side, kind)]
-            parts.append(f"{kind}={sum(results)}/{len(results)}")
+            parts.append(f"{kind}={sum(results)}/{len(results)}" if results else f"{kind}=--")
         print(f"{side.value:5s} defending: {'  '.join(parts)}")
+    if illegal:
+        print(
+            f"({len(illegal)} scenario(s) excluded above -- reoccupied a cell: "
+            f"{', '.join(s.name for s in illegal)})"
+        )
 
 
 if __name__ == "__main__":

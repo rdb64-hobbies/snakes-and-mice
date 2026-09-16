@@ -36,13 +36,22 @@ from snakes_and_mice.players import Player
 
 @dataclass(frozen=True)
 class Scenario:
-    """A hand-built position, validated before use (see `validate`)."""
+    """A hand-built position, validated before use (see `validate`).
+
+    ``mouse_order`` / ``snake_order``, if given, fix the order cells are
+    consumed into moves during replay (see `replay_sequence`) — same final
+    occupancy, different position in the constructed history. Used to test
+    whether *when* a cell was placed, not just that it was, affects whether a
+    model still tracks it as occupied several turns later.
+    """
 
     name: str
     defender: Side
     seed: str
     mouse_cells: frozenset[str]
     snake_cells: frozenset[str]  # includes the seed
+    mouse_order: tuple[str, ...] | None = None
+    snake_order: tuple[str, ...] | None = None
 
 
 def _line_labels() -> tuple[frozenset[str], ...]:
@@ -100,16 +109,32 @@ def validate(s: Scenario) -> list[frozenset[str]]:
 
 
 def replay_sequence(
-    mouse_cells: frozenset[str], snake_cells: frozenset[str], seed: str
+    mouse_cells: frozenset[str],
+    snake_cells: frozenset[str],
+    seed: str,
+    *,
+    mouse_order: tuple[str, ...] | None = None,
+    snake_order: tuple[str, ...] | None = None,
 ) -> list[tuple[Side, tuple[str, ...]]]:
     """One alternating, Mouse-first sequence reaching this occupancy.
 
-    Order within a side never matters for the final position (module
+    Which final position each side's moves land in never matters (module
     docstring: no intermediate state can complete a line the final one
-    doesn't), so cells are just consumed in sorted order.
+    doesn't), so cells are consumed in sorted order by default. ``mouse_order``
+    / ``snake_order`` override that — the same cells, consumed (and so paired
+    into moves) in a caller-chosen order instead, to control which move a
+    particular cell falls on without changing the final position at all.
     """
-    mouse_left = sorted(mouse_cells)
-    snake_left = sorted(c for c in snake_cells if c != seed)
+    mouse_left = list(mouse_order) if mouse_order is not None else sorted(mouse_cells)
+    snake_left = (
+        list(snake_order)
+        if snake_order is not None
+        else sorted(c for c in snake_cells if c != seed)
+    )
+    assert set(mouse_left) == mouse_cells, "mouse_order must be a permutation of mouse_cells"
+    assert set(snake_left) == snake_cells - {seed}, (
+        "snake_order must be a permutation of snake_cells minus the seed"
+    )
     moves: list[tuple[Side, tuple[str, ...]]] = []
     while mouse_left or snake_left:
         if mouse_left:
@@ -119,13 +144,38 @@ def replay_sequence(
     return moves
 
 
-def run(player: Player, s: Scenario) -> tuple[Move, list[frozenset[str]], list[bool]]:
+@dataclass(frozen=True)
+class Response:
+    """One scenario's outcome.
+
+    ``legal`` is `False` if the move reoccupied a cell the scenario already had
+    filled — the model losing track of its own board, not a judgement about
+    which threat it addressed. `hits` is computed regardless (it costs nothing
+    and an illegal move's *other* cell may still be informative), but a caller
+    should report `legal is False` distinctly rather than folding it into a
+    hit/miss tally: a "hit" earned by luck on the one real cell of an otherwise
+    illegal move is not the same finding as a clean defense.
+    """
+
+    move: Move
+    threats: list[frozenset[str]]
+    legal: bool
+    hits: list[bool]
+
+
+def run(player: Player, s: Scenario) -> Response:
     """Replay `s` into `player`, take its move, and check every threat."""
     threats = validate(s)
+    occupied = s.mouse_cells | s.snake_cells
     player.start_game(s.defender, Cell.from_label(s.seed))
-    for side, labels in replay_sequence(s.mouse_cells, s.snake_cells, s.seed):
+    sequence = replay_sequence(
+        s.mouse_cells, s.snake_cells, s.seed,
+        mouse_order=s.mouse_order, snake_order=s.snake_order,
+    )
+    for side, labels in sequence:
         move = Move.of(*(Cell.from_label(label) for label in labels))
         player.observe_move(side, move)
     choice = player.choose_move()
     played: frozenset[str] = frozenset(c.label for c in choice.move.cells)
-    return choice.move, threats, [bool(t & played) for t in threats]
+    legal = not (played & occupied)
+    return Response(choice.move, threats, legal, [bool(t & played) for t in threats])

@@ -39,6 +39,7 @@ import sys
 
 from snakes_and_mice.cli_common import make_player
 from snakes_and_mice.core import Side
+from snakes_and_mice.faults import MoveUnavailable
 from snakes_and_mice.roster import ConfigError, Roster, load_environment, load_roster
 
 from threat_scenarios import Scenario, run
@@ -121,15 +122,24 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(str(exc))
 
     results: list[tuple[Scenario, bool]] = []
+    illegal: list[Scenario] = []
     for s in SCENARIOS:
         player = make_player(args.llm, s.defender, roster, log_dir=None)
-        move, threats, hits = run(player, s)
-        ok = all(hits)
+        try:
+            r = run(player, s)
+        except MoveUnavailable as exc:
+            print(f"{s.name:30s} FAULT (excluded): {exc.reason.name} -- {exc}")
+            continue
+        kind = "single" if len(r.threats) == 1 else "double"
+        if not r.legal:
+            illegal.append(s)
+            print(f"{s.name:30s} [{kind}] played {r.move}: ILLEGAL -- reoccupied a cell")
+            continue
+        ok = all(r.hits)
         results.append((s, ok))
-        kind = "single" if len(threats) == 1 else "double"
         print(
-            f"{s.name:30s} [{kind}] played {move}: "
-            f"{sum(hits)}/{len(threats)} threats addressed "
+            f"{s.name:30s} [{kind}] played {r.move}: "
+            f"{sum(r.hits)}/{len(r.threats)} threats addressed "
             f"({'OK' if ok else 'MISSED ONE'})"
         )
 
@@ -140,6 +150,11 @@ def main(argv: list[str] | None = None) -> None:
         f"single-threat: {sum(single)}/{len(single)} fully defended  |  "
         f"double-threat: {sum(double)}/{len(double)} fully defended"
     )
+    if illegal:
+        print(
+            f"({len(illegal)} scenario(s) excluded above -- reoccupied a cell: "
+            f"{', '.join(s.name for s in illegal)})"
+        )
 
 
 if __name__ == "__main__":

@@ -12,12 +12,16 @@
 > later controlled test did not support — see "What the mistakes look like"
 > below for both the finding and its retraction), a follow-up finding that
 > simultaneous threats are harder to defend than one (see "A second lever"
-> below), and the mistake model's form — a hand-crafted score, now built on the
-> one feature with controlled support, doubling as both a reward-shaping
-> potential and the ranking function for targeted data collection (see "The
-> mistake model" below). It deliberately does **not** cover the training
-> algorithm or any network/function-approximator architecture — neither has been
-> decided yet, and this document will grow to cover them once they are.
+> below), the mistake model's form — a hand-crafted score, built on the one
+> feature with controlled support, doubling as both a reward-shaping potential
+> and the ranking function for targeted data collection (see "The mistake
+> model" below) — and where cross-model testing of that feature currently
+> stands: not yet replicated off the one model it was found on, and a second,
+> not-yet-decisive lead (recency of placement) found while trying (see
+> "Generalizing across models" below). It deliberately does **not** cover the
+> training algorithm or any network/function-approximator architecture —
+> neither has been decided yet, and this document will grow to cover them
+> once they are.
 
 ## Goal
 
@@ -257,11 +261,19 @@ matched positions, one live three-piece threat each — a row, a column, or a
 diagonal, two replicates of each, for both defending sides, all at the same
 total piece count within a side (9 for Mouse, 11 for Snake).
 
-**12 of 12 fully defended.** Every row, every column, every diagonal, on both
-sides. This is the first time any of these findings measured a true
-per-opportunity rate rather than a breakdown of existing failures, and it says a
-lone, freshly-presented threat of any line type is defended reliably — consistent
-with the tiny overall mistake rate from "Result," above (4 of 188 graded moves).
+**12 of 12 correctly identified and addressed the real threat.** Every row,
+every column, every diagonal, on both sides. **Correction, 2026-09-16: 3 of the
+12 were graded before a bug was found and fixed (see "Recency of placement,"
+below) that let a move re-occupy an already-filled cell without being caught.**
+All 3 still touched the actual threat with their other, legal cell — the
+"no line-type effect" conclusion below is unaffected — but they were not the
+clean successes originally reported here; they belong with the recency finding,
+not with the 9 unqualified ones. This is still the first time any of these
+findings measured a true per-opportunity rate rather than a breakdown of
+existing failures, and it still says a lone, freshly-presented threat of any
+line type is generally defended reliably — consistent with the tiny overall
+mistake rate from "Result," above (4 of 188 graded moves) — just not as cleanly
+as "12 of 12" first suggested.
 
 This reframes both of the findings above rather than simply adding to them. The
 column-dominant failure breakdown and the two diagonal anecdotes were never shown
@@ -380,7 +392,10 @@ matched-position treatment, it belongs back in this list on that basis, not on a
 failure-breakdown alone.
 
 None of the actual weights or thresholds are decided here — only that this is
-the feature worth starting from.
+the feature worth starting from. A second candidate — recency of placement —
+turned up after this section was written; it is documented (§"Generalizing
+across models," below) but deliberately kept out of this list, since its
+evidence does not yet meet the same bar this one does.
 
 ### Two roles, one function
 
@@ -401,3 +416,97 @@ the double-threat claim got: construct matched positions that vary only in what
 the score predicts, and check the mistake rate actually tracks it —
 `tools/probe_multi_threats.py` is the existing pattern to extend for this — not
 accepted because the mechanism sounds right.
+
+## Generalizing across models: mixed, and a new lead found along the way
+
+### The double-threat effect has not yet replicated off `qwen-3-8-rtx`
+
+`tools/probe_multi_threats.py`, run against two more models (2026-09-16):
+
+- `gpt-5-6-terra`: 3 of 3 single-threat, 3 of 3 double-threat, all legal —
+  **no degradation.**
+- `gemini-3-8`: 4 of 4 single-threat, 4 of 4 double-threat, all legal — **no
+  degradation.**
+
+The one feature the mistake model currently rests on has controlled support on
+exactly one model. That does not retract "A second lever" — the qwen result
+stands, and n=3–4 per condition on two new models is not enough to conclude the
+effect is qwen-specific either — but "Breadth is open" (the Goal, above) is not
+yet demonstrated for this feature, only hoped for. It needs more models, and
+probably more positions per model, before that question has a real answer
+either way.
+
+### A bug surfaced a bigger lead: recency of placement
+
+The runs above only came back clean because of a fix made while running them.
+`tools/threat_scenarios.py`'s `run()` never checked whether a returned move
+reoccupied a cell the scenario already had filled — it just graded whatever
+came back against the threat lines, so a move that replayed an old cell could
+still look like a clean success if its *other* cell happened to touch the
+threat. Two `gpt-5-6-terra` responses did exactly that. Once caught (`Response.
+legal`, added 2026-09-16), the same check was run backward over every prior
+probe:
+
+- `gpt-5-6-terra`, `mouse-defends-double-row-col`: reoccupied `A1` in **both**
+  runs it was tried.
+- `gpt-5-6-terra`, `snake-defends-single-row`: reoccupied `B4`.
+- `qwen-3-8-rtx`, `snake-defends-single-row`: reoccupied `B4` — the *same*
+  scenario and cell `gpt-5-6-terra` later failed, an unplanned two-model
+  replication sitting in data already collected.
+- `qwen-3-8-rtx`, `probe_line_types.py`'s `mouse-defends-row-A` and
+  `snake-defends-row-D`: reoccupied `C4` and `A4` respectively (the correction
+  in "Isolated single threats," above).
+
+In every one of those five, the reoccupied cell was that side's **first** move
+in the constructed sequence — the oldest fact in the history. That is a
+recency effect, not a general loss of board-tracking, and it is testable
+directly: build the *identical final position* via a different construction
+order, so the same cell lands on the last move instead of the first, and see
+if it stops being forgotten.
+
+`tools/probe_recency.py` does this — two pairs reusing the exact positions
+above (only the "late" half run; the "early" half already existed), plus two
+freshly-designed pairs run both ways, since no result should rest only on
+positions found by accident. Full tally across every model tested:
+
+| Condition | Instances | Forgotten |
+|---|---:|---:|
+| Early (first move) | 10 | 6 |
+| Late (last move) | 6 | 0 |
+
+Six of ten early placements were forgotten; zero of six late ones were. That
+is a real, substantial gap, not a coincidence of the two positions where it
+was first noticed. Three qualifications keep it from being cleaner than it is:
+
+- **Only two of the three models tested ever showed it.** `gpt-5-6-terra`
+  (3 of 3 early instances forgotten) and `qwen-3-8-rtx` (3 of 5) account for
+  every forgotten instance; `gemini-3-8` never has (0 of 2) — the same
+  qualification "A second lever" needed for the double-threat effect applies
+  here too: not yet known to be general.
+  `gemini-3-8`'s two correct instances are also weaker evidence than the
+  others, since it simply never played near the cell at all, rather than
+  demonstrating a pull toward it and then correctly leaving it alone the way
+  the fresh pairs' late halves do.
+- **One clear counter-example**: `qwen-3-8-rtx`, `probe_line_types.py`'s
+  `snake-defends-col-2`, reoccupied `E3` — placed on the *last* snake move, not
+  the first.
+- **The two freshly-designed pairs showed no effect in either condition**, on
+  `qwen-3-8-rtx` — `D1` and a second, unrelated `B4` were both correctly
+  tracked whether placed early or late. Recency did not reproduce on demand for
+  these cells the way it did for the three found by accident.
+
+### Status: a real lead, not yet a feature
+
+Recency of placement is not added to "Candidate features," above. The evidence
+is substantial in volume but mixed in a way the double-threat feature's evidence
+was not: that feature degraded cleanly and predictably across every matched
+pair tried (§"A second lever"); this one degrades on some cells and models and
+not others, for reasons not yet identified — what makes `A1`, `B4`, `C4`, and
+`A4` forgettable but not the two cells picked for the fresh pairs is an open
+question, not a settled mechanism. Promoting it would mean scoring positions on
+a pattern that is still, honestly, "happens often but not reliably, on cells
+that are hard to characterize in advance." Worth continuing to probe — a
+promising next step would be varying board position or line role of the target
+cell rather than only its recency — but it stays a documented lead, not a
+scored feature, until it can predict which cells get forgotten rather than only
+explain the ones that already were.
