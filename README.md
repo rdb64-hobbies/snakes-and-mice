@@ -24,6 +24,9 @@ there. After all, if a model keeps attempting illegal or nonsensical moves, or
 if it can't play this game at the level of a 7-year-old, maybe it isn't the best
 choice for an agent.
 
+Curious how various LLMs actually fared against each other and against
+`perfect`? See [`RESULTS.md`](RESULTS.md).
+
 The full game rules and system design live in [`SPEC.md`](SPEC.md), with the two
 substantial player types specified alongside it — the LLM player in
 [`SPEC-llm-player.md`](SPEC-llm-player.md) and the perfect player in
