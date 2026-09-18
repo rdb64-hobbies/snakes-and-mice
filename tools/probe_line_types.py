@@ -1,6 +1,6 @@
 """Does a lone diagonal threat get missed more often than a lone row or column?
 
-SPEC-rl-player.md ("What the mistakes look like") found `qwen-3-8-rtx` missing
+SPEC-mistake-model.md ("What the mistakes look like") found `qwen-3-8-rtx` missing
 column threats far more than row threats as Mouse, nearly evenly between the two
 as Snake, and apparently not checking for diagonal threats at all in two
 observed cases. Neither reading isolates line type cleanly: the column-vs-row

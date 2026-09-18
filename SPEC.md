@@ -13,7 +13,8 @@ their work touches. Section numbers are stable and never reused.
 | **`SPEC.md`** (this file) | The game and rules (§2), the `Player` abstraction (§3), matches (§5), tournaments (§6), the CLI (§7), architecture (§8), tooling (§9), versioning and scope (§11). |
 | [`SPEC-llm-player.md`](SPEC-llm-player.md) | The **LLM player** in full: Pydantic AI, structured output, the message thread, reasoning pruning, model/provider selection, thinking levels, message logging, endpoint probes. Summarized in §4. |
 | [`SPEC-perfect-player.md`](SPEC-perfect-player.md) | The **algorithmic (perfect) player** in full: alpha–beta search, depth-aware scoring, the 32-element symmetry group and transposition table, the tie-break, the opening table, the solved result. Summarized in §10. |
-| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, and the measured finding that LLM mistakes are exploitable. Summarized in §3, "Player types". |
+| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, the algorithm and network. Summarized in §3, "Player types". |
+| [`SPEC-mistake-model.md`](SPEC-mistake-model.md) | The **mistake model**: the empirical investigation into whether and how LLMs make systematic mistakes at this game, and the hand-crafted scoring function built from it. Consumed by both `SPEC-rl-player.md` and `SPEC-perfect-player.md`, "Selecting a variant". |
 | [`tools/solver/SPEC.md`](tools/solver/SPEC.md) | The **offline solver** that produces the perfect player's opening table, and the table file format. |
 
 §4 and §10 remain in this document as summaries: each states the contract the rest of

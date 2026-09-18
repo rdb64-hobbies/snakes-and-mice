@@ -56,7 +56,7 @@ from threat_scenarios import Scenario, run
 # the row/column bias already found, since that is a separate effect this
 # probe is not about. The last four pairs (added 2026-09-16) were built
 # specifically to widen cross-model testing beyond the original four, whose
-# generalization off qwen-3-8-rtx (SPEC-rl-player.md, "Generalizing across
+# generalization off qwen-3-8-rtx (SPEC-mistake-model.md, "Generalizing across
 # models") is not yet established at n=4.
 
 SCENARIOS: tuple[Scenario, ...] = (

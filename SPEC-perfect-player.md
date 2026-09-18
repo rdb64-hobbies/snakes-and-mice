@@ -290,7 +290,7 @@ subclass already reconstructs) — and the CLI's built-in-kind dispatch
 alongside `perfect`. Each name is still exactly one fixed, calibrated configuration —
 `perfect` does not change — so a results file (SPEC.md §6) keeps meaning what it
 already means; a match simply gets to choose which of two (eventually three, once a
-mistake-model heuristic exists — SPEC-rl-player.md, "The mistake model") stably-named
+mistake-model heuristic exists — SPEC-mistake-model.md, "The mistake model") stably-named
 players it wants. `tools/bench_tie_break.py`'s subclass becomes redundant once this
 lands and can be replaced with the constructor option directly.
 
@@ -320,7 +320,7 @@ Its chain reuses trap count unchanged — still the exact quantity, still worth
 computing first — but **replaces liveness** rather than adding to it:
 
 1. **Trap count**, exactly as above, same gates.
-2. **The mistake-model score** (SPEC-rl-player.md, "The mistake model"),
+2. **The mistake-model score** (SPEC-mistake-model.md, "The mistake model"),
    evaluated on the position each candidate move leads to; higher preferred.
    It takes liveness's place in the chain because both keys exist to do the
    same job — approximate exploitability in the band where counting traps
@@ -333,7 +333,7 @@ computing first — but **replaces liveness** rather than adding to it:
 
 `perfect-mistake-model` is fixed to *today's* mistake model — the single
 double-threat/alignment feature, not whatever the model grows into later. If a
-second feature is ever promoted into it (SPEC-rl-player.md, "Candidate
+second feature is ever promoted into it (SPEC-mistake-model.md, "Candidate
 features"), that is a new named variant, not a silent change to this one —
 the same discipline that keeps `perfect` and `perfect-unranked` each one fixed
 meaning applies here too.
