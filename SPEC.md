@@ -1158,8 +1158,10 @@ What the rest of this document relies on:
   draw. `perfect` itself always ranks this way, so its name stays one calibrated
   yardstick — but which ranking a match uses is planned to become a choice of *which
   built-in name* to play, not a flag on this one (SPEC-perfect-player.md, "Selecting a
-  variant"; SPEC-rl-player.md needs an unranked baseline to measure the RL player
-  against). Not yet implemented.
+  variant"): an unranked `perfect-unranked` and a `perfect-mistake-model` that ranks
+  by a hand-coded LLM-bias feature instead of trappiness, the two non-learned
+  baselines SPEC-rl-player.md needs to measure the RL player against. Not yet
+  implemented.
 - **The game is a draw.** All four seed classes are solved; every seed is drawn under
   perfect play, which settles the game-balance question §11 lists as out of scope for
   _perfect_ players (it says nothing about fallible ones).

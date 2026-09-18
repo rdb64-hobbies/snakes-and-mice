@@ -294,6 +294,50 @@ mistake-model heuristic exists — SPEC-rl-player.md, "The mistake model") stabl
 players it wants. `tools/bench_tie_break.py`'s subclass becomes redundant once this
 lands and can be replaced with the constructor option directly.
 
+**The constructor's default is `none`, not `trappiness`** — deliberately the
+opposite of what a bare `PerfectPlayer()` does today (today there is no option,
+and the only behavior is ranking). A perfect player is, by the mathematical
+definition in "What perfect means" above, one that always returns an optimal
+move; ranking among optimal moves is an added feature for exploiting a
+fallible opponent, not part of that definition, so the unadorned construction
+should give the unadorned player. This has no effect on the CLI names: dispatch
+(`cli_common.make_player`) passes `tie_break` explicitly for every built-in
+name, `perfect` included, precisely so that `perfect` keeps ranking regardless
+of what the constructor defaults to — the default only matters to code that
+constructs `PerfectPlayer` directly without naming a policy (tests, tools,
+future callers), which now gets the pure optimal player unless it asks for
+more.
+
+### The third variant's tie-break, decided 2026-09-18 (still not implemented)
+
+The third variant — constructor option `mistake-model`, CLI name
+`perfect-mistake-model` — is the non-learned upper bound the RL player has to
+beat: proof that learning found something beyond what a hand-coded rule using
+only the one validated bias feature could already do (SPEC-rl-player.md,
+"The comparison also needs a non-learned upper bound").
+
+Its chain reuses trap count unchanged — still the exact quantity, still worth
+computing first — but **replaces liveness** rather than adding to it:
+
+1. **Trap count**, exactly as above, same gates.
+2. **The mistake-model score** (SPEC-rl-player.md, "The mistake model"),
+   evaluated on the position each candidate move leads to; higher preferred.
+   It takes liveness's place in the chain because both keys exist to do the
+   same job — approximate exploitability in the band where counting traps
+   exactly is too slow — and this score is the better-evidenced of the two,
+   being built from a feature with actual cross-model measurement behind it
+   rather than board geometry alone. It is gated identically to liveness
+   (18 empty cells and below, for the same reason: a deterministic key run
+   during the widely-branching opening would collapse a seed onto one game).
+3. **Uniformly at random**, same as every other variant.
+
+`perfect-mistake-model` is fixed to *today's* mistake model — the single
+double-threat/alignment feature, not whatever the model grows into later. If a
+second feature is ever promoted into it (SPEC-rl-player.md, "Candidate
+features"), that is a new named variant, not a silent change to this one —
+the same discipline that keeps `perfect` and `perfect-unranked` each one fixed
+meaning applies here too.
+
 ## Where the table comes from
 
 The table is produced by an **offline retrograde solve** of the whole game: a forward

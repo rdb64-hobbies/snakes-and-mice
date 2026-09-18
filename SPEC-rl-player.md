@@ -13,22 +13,25 @@
 > below for both the finding and its retraction), a follow-up finding that
 > simultaneous threats are harder to defend than one (see "A second lever"
 > below), the mistake model's form — a hand-crafted score, built on the one
-> feature with controlled support, doubling as both a reward-shaping potential
-> and the ranking function for targeted data collection (see "The mistake
-> model" below) — and where cross-model testing of that feature currently
-> stands: replicated on 2 of 3 models tried, at a smaller and noisier
-> magnitude than first measured, with one model showing no effect so far; and
-> a second, not-yet-decisive lead (recency of placement) found while testing
-> that (see "Generalizing across models" below). It also now covers the
-> training algorithm and network (self-play PPO, a critic regressed against
-> the solved game, a small MLP — see "The algorithm and network" below),
-> periodically training and evaluating against real LLMs alongside self-play
-> (see "Periodic fine-tuning" below), and the need for an unranked `perfect`
-> baseline to measure the result against (the Goal, below; specified in
-> SPEC-perfect-player.md). Left for later: the mistake model's exact weights
-> and thresholds (§"The mistake model"), and everything below the
-> architecture level — training hyperparameters, curriculum details, and the
-> unranked-`perfect`-variant's own implementation.
+> feature with controlled support, now serving three roles: a reward-shaping
+> potential, the ranking function for targeted data collection, and the
+> tie-break key for a third `perfect` variant (see "The mistake model" below)
+> — and where cross-model testing of that feature currently stands: replicated
+> on 2 of 3 models tried, at a smaller and noisier magnitude than first
+> measured, with one model showing no effect so far; and a second,
+> not-yet-decisive lead (recency of placement) found while testing that (see
+> "Generalizing across models" below). It also now covers the training
+> algorithm and network (self-play PPO, a critic regressed against the solved
+> game, a small MLP — see "The algorithm and network" below), periodically
+> training and evaluating against real LLMs alongside self-play (see "Periodic
+> fine-tuning" below), and the need for two non-learned baselines to measure
+> the result against — `perfect` with no heuristic, and `perfect` with only
+> the one validated bias feature (the Goal, below; both specified in
+> SPEC-perfect-player.md, "Selecting a variant"). Left for later: the mistake
+> model's exact weights and thresholds beyond its current single feature
+> (§"The mistake model"), and everything below the architecture level —
+> training hyperparameters, curriculum details, and the two `perfect`
+> variants' own implementation.
 
 ## Goal
 
@@ -61,6 +64,14 @@ the game-theoretic sense.
   does" — the clean comparison is against ranking switched off entirely.
   SPEC-perfect-player.md, "Selecting a variant" specifies this as a planned,
   separately-named, still-unimplemented `perfect` variant.
+- **The comparison also needs a non-learned upper bound that already knows the
+  one validated bias feature.** Beating `perfect`-with-no-heuristic is a low
+  bar — it isn't even trying to exploit anything. The RL player's real claim is
+  that *learning* found something a hand-coded rule using only the double-threat
+  feature (§"The mistake model," below) could not. That claim needs the
+  hand-coded rule shipped as a player, not just as a shaping term internal to
+  training — SPEC-perfect-player.md, "Selecting a variant" specifies this as
+  the third `perfect` variant, `perfect-mistake-model`.
 
 ## Training strategy
 
@@ -135,7 +146,7 @@ error. Pretraining and continued regularization of the value head against the
 exact solved values lets the actual learning effort go entirely toward the
 genuinely unknown part: how to trade a sliver of that optimality for exploitation,
 which is what step 5 of the loop (above) and the mistake model's shaping term
-("Two roles," below) need to learn.
+("Three roles," below) need to learn.
 
 **Network: a small MLP over the board occupancy, not a CNN.** The board is 5×5,
 and a convolutional architecture's core assumption — a spatial filter reused
@@ -466,9 +477,9 @@ turned up after this section was written; it is documented (§"Generalizing
 across models," below) but deliberately kept out of this list, since its
 evidence does not yet meet the same bar this one does.
 
-### Two roles, one function
+### Three roles, one function
 
-The same score serves both remaining open items at once:
+The same score now serves three consumers:
 
 - As a **potential function** for potential-based reward shaping — added to the
   terminal reward in the standard `γΦ(s') − Φ(s)` form, which provably leaves the
@@ -477,6 +488,17 @@ The same score serves both remaining open items at once:
 - As the **ranking function for step 3** of the loop ("densify") — which
   constructed positions are worth spending a live-LLM query on, rather than
   probing uniformly.
+- As the **tie-break key for `perfect-mistake-model`**, decided 2026-09-18
+  (SPEC-perfect-player.md, "Selecting a variant"): among moves already tied on
+  the exact trap count, that variant prefers whichever leaves the opponent
+  facing the higher score, in place of the trappiness variant's liveness key.
+  It replaces liveness rather than joining it because both exist for the same
+  reason — approximating exploitability where exact trap-counting is too deep
+  to run — and this score is the better-evidenced approximation of the two.
+
+Adding this third consumer is why the caveat below needs its own paragraph:
+the first two never needed to know the score's magnitude, but a tie-break is a
+ranking, and rankings are exactly where magnitude would seem to matter.
 
 ### What validation means for a shaping term: direction, not magnitude
 
@@ -493,9 +515,10 @@ engineered," never "how often it occurs, or how much it moves the needle, in
 the wild." That is the only question this method is equipped to answer, and
 for this feature's actual use it is the only one that needs answering.
 
-That is because the score is used only as a **potential-based shaping term**
-("Two roles," above), which is provably policy-invariant *regardless of the
-weight given it* — getting the size of the effect wrong leaves the shaping
+That is because, for the shaping-term and densify-ranking roles, the score is
+used as a **potential-based shaping term** ("Three roles," above), which is
+provably policy-invariant *regardless of the weight given it* — getting the
+size of the effect wrong leaves the shaping
 term mis-calibrated, not harmful. What would actually undermine it is a
 feature that sometimes points the wrong way — helps the defender rather than
 the attacker on some fraction of positions. Nothing measured so far does that:
@@ -503,6 +526,17 @@ every matched pair, on every model tried, shows double-threat performance
 equal to or worse than single-threat, never better. **That is what "validated"
 should require here — the sign is right, not that the exact multiplier is
 known** — and it is what the cross-model results below satisfy.
+
+The tie-break use ("Three roles," above) looks like it should reopen the
+magnitude question — a ranking, unlike a shaping term, is not policy-invariant
+to getting the weight wrong. It doesn't, but only because there is currently
+exactly **one** feature: with a single term, "prefer the higher score" and
+"prefer the direction that's validated" are the same statement, so no weight
+is actually being chosen. That stops being true the moment a second feature is
+added to the list in "Candidate features" — combining two scores into one
+ranking requires deciding their relative weight, which direction-only
+validation cannot supply. Whoever promotes a second feature into this model
+inherits that decision; it is out of scope while the list has one entry.
 
 ## Generalizing across models: mixed, and a new lead found along the way
 
