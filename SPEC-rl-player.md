@@ -16,9 +16,10 @@
 > against a live LLM cannot be the primary loop, the six-step loop itself, and
 > why the mistake model's shaping term is needed to reward progress toward a
 > rare, high-value intermediate state before any terminal win or loss — see
-> "Training strategy" below); the training algorithm and network (self-play PPO,
-> a critic regressed against the solved game, a small MLP — see "The algorithm
-> and network" below); and periodically training and evaluating against real
+> "Training strategy" below); the training algorithm, network, and action
+> space (self-play PPO, a critic regressed against the solved game, a small
+> MLP, a factored sequential two-cell policy head — see "The algorithm and
+> network" below); and periodically training and evaluating against real
 > LLMs alongside self-play (see "Periodic fine-tuning" below). Left for later:
 > everything below the architecture level — training hyperparameters,
 > curriculum details, and the two `perfect` variants' own implementation. The
@@ -152,6 +153,18 @@ obviously earn its cost at this size, and the board has no wraparound symmetry a
 CNN's receptive field would otherwise exploit either. A small MLP over the two
 occupancy planes (or one signed plane, mine minus theirs) is the starting point
 until shown insufficient.
+
+**The action space is factored and sequential, not a joint distribution over
+cell pairs.** A move places two cells (SPEC.md §2.5), but the policy treats
+that as two sequential single-cell choices rather than one draw from a joint
+space that would run as large as C(25,2) early in the game and grow awkward to
+mask exactly as it shrinks: a 25-way softmax over cells for the first
+placement, masked to the empty ones, then a second 25-way softmax for the
+second, masked to whatever remains empty after the first. This keeps the
+policy head a fixed size regardless of how full the board is, and needs no
+separate representation for the single-piece move that is legal only when it
+ends the game (SPEC.md §2.5) — that case is simply the one where the second
+placement is skipped.
 
 ### Periodic fine-tuning and evaluation against real LLMs, decided 2026-09-18
 
