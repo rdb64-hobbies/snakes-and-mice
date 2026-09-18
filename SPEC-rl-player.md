@@ -19,10 +19,16 @@
 > stands: replicated on 2 of 3 models tried, at a smaller and noisier
 > magnitude than first measured, with one model showing no effect so far; and
 > a second, not-yet-decisive lead (recency of placement) found while testing
-> that (see "Generalizing across models" below). It deliberately does **not**
-> cover the training algorithm or any network/function-approximator
-> architecture — neither has been decided yet, and this document will grow to
-> cover them once they are.
+> that (see "Generalizing across models" below). It also now covers the
+> training algorithm and network (self-play PPO, a critic regressed against
+> the solved game, a small MLP — see "The algorithm and network" below),
+> periodically training and evaluating against real LLMs alongside self-play
+> (see "Periodic fine-tuning" below), and the need for an unranked `perfect`
+> baseline to measure the result against (the Goal, below; specified in
+> SPEC-perfect-player.md). Left for later: the mistake model's exact weights
+> and thresholds (§"The mistake model"), and everything below the
+> architecture level — training hyperparameters, curriculum details, and the
+> unranked-`perfect`-variant's own implementation.
 
 ## Goal
 
@@ -47,6 +53,14 @@ the game-theoretic sense.
 - **The actual bar is comparative, not absolute.** "Beats LLM X more often than
   the perfect player does" is the success criterion — not merely "wins some games
   against LLM X."
+- **The comparison needs `perfect` with no heuristic, not `perfect` as shipped.**
+  `perfect` already ranks among equally optimal moves to exploit a fallible
+  opponent (SPEC.md §10, "Choosing among optimal moves"). Measuring the RL player
+  against that ranked version can't distinguish "the RL player found something
+  real" from "it merely matches what the existing hand-coded ranking already
+  does" — the clean comparison is against ranking switched off entirely.
+  SPEC-perfect-player.md, "Selecting a variant" specifies this as a planned,
+  separately-named, still-unimplemented `perfect` variant.
 
 ## Training strategy
 
@@ -98,11 +112,65 @@ resource deliberately rather than burning it as ordinary training volume.
    time — refresh with fresh live-LLM probes periodically rather than treating any
    one round of data collection as final.
 
-**Explicitly undecided**, and out of scope for this document until settled: the RL
-algorithm itself and any network or function-approximator architecture. The
-mistake model's form, and how it rewards progress toward a rare, high-value
+The mistake model's form, and how it rewards progress toward a rare, high-value
 intermediate state before any terminal win/loss, turned out to be one decision
 rather than two — see "The mistake model," below.
+
+### The algorithm and network, decided 2026-09-18
+
+**Self-play actor-critic, specifically PPO — not AlphaZero-style search at either
+train or inference time.** AlphaZero's search-augmented self-play earns its cost in
+games with enormous branching and long horizons, where raw self-play is too
+sample-inefficient without search amplifying weak value estimates into stronger
+training targets. This game is at most 12 plies with a shrinking branching factor;
+that problem barely exists here. Search at inference time would also make this
+player qualitatively different from every other player type in the project
+(SPEC.md §3) for no real benefit — `random`, the LLM player, and even `perfect`'s
+own full search all respond quickly.
+
+**The critic is regressed against `evaluate()` (SPEC.md §10), not learned from
+self-play alone.** The game is solved — the exact value of any position is already
+known — so training budget should not be spent rediscovering it by trial and
+error. Pretraining and continued regularization of the value head against the
+exact solved values lets the actual learning effort go entirely toward the
+genuinely unknown part: how to trade a sliver of that optimality for exploitation,
+which is what step 5 of the loop (above) and the mistake model's shaping term
+("Two roles," below) need to learn.
+
+**Network: a small MLP over the board occupancy, not a CNN.** The board is 5×5,
+and a convolutional architecture's core assumption — a spatial filter reused
+across positions, learning something translation-invariant worth sharing — doesn't
+obviously earn its cost at this size, and the board has no wraparound symmetry a
+CNN's receptive field would otherwise exploit either. A small MLP over the two
+occupancy planes (or one signed plane, mine minus theirs) is the starting point
+until shown insufficient.
+
+### Periodic fine-tuning and evaluation against real LLMs, decided 2026-09-18
+
+Step 5's opponent pool (self-play, `random`, `perfect`) is not the whole story:
+**periodically, a training episode's opponent is a real, live LLM instead** —
+`qwen-3-8` locally (free, and patient enough to afford real volume) and, for
+hosted models, whatever tens to hundreds of games their modest cost affords. This
+is not "more training data" in the sense of moving the needle on bulk policy
+quality — that volume is negligible next to whatever scale self-play runs at.
+Three things it is for instead:
+
+- **Ground-truth evaluation.** Self-play performance is a proxy; "does this beat
+  the actual target LLM more often than `perfect` does" (the Goal, above) is the
+  only number that actually answers the project's question, and only real games
+  against the real target produce it.
+- **Continued mistake-model validation** (step 6 of the loop, above) — already the
+  plan; not a new use of these games, just named here as one of several.
+- **Marginal fine-tuning.** The hand-crafted mistake model (below) encodes exactly
+  the mechanisms validated so far and almost certainly misses others a specific
+  model has. A modest amount of direct experience against the real target, layered
+  on a self-play-trained base, is a way to pick up what the hand-crafted score
+  can't see — matching the project's actual goal (a margin beyond optimal play),
+  not standing in for bulk training it was never going to afford.
+
+This needs no new mechanism: PPO trains on the agent's own actions and rewards
+within an episode and does not otherwise care who or what the opponent was, so a
+live LLM is just another environment to occasionally sample, not a special case.
 
 ## Finding out whether the premise holds
 

@@ -262,13 +262,37 @@ the rest. The caveat on the numbers is that a random opponent misses traps unifo
 whereas an LLM misses _subtle_ ones, so trap density is a proxy for that rather than a
 model of it, and the gain against a model will differ.
 
-Ranking is **not configurable**: the player always ranks. A selectable policy would make
-`perfect` mean two different strengths under one name, and a results file identifies a
-player by name alone (SPEC.md §6) — so the yardstick would stop being calibrated
-(SPEC.md §1). The unranked baseline is instead reconstructed outside the player, by a
+Ranking is **not configurable on the name `perfect`**: that player always ranks. A
+flag that changed its behavior in place would make `perfect` mean two different
+strengths under one name, and a results file identifies a player by name alone
+(SPEC.md §6) — so the yardstick would stop being calibrated (SPEC.md §1). Until now
+the unranked baseline has only ever been reconstructed *outside* the player, by a
 throwaway subclass that restores the old pick;
 [`tools/bench_tie_break.py`](tools/bench_tie_break.py) does exactly that, and is how the
 comparison above is re-run whenever the keys or their gates change.
+
+### Selecting a variant (planned, not yet implemented)
+
+The RL player's evaluation needs the same unranked baseline as a first-class match
+participant, not a throwaway subclass internal to one benchmarking tool
+(SPEC-rl-player.md: comparing the RL player against `perfect`-with-ranking cannot
+distinguish "the RL player found something real" from "it merely matches what the
+existing hand-coded ranking already does" — the clean comparison is against ranking
+switched off entirely).
+
+The name-stability constraint above rules out a runtime flag on `perfect` itself, but
+not a **second, separately-named, equally fixed** built-in player: `PerfectPlayer`
+gains a constructor option selecting its tie-break policy from a small fixed set — at
+minimum `trappiness` (the ranking described above, `perfect`'s only behavior today)
+and `none` (uniform-random over the optimal pool, i.e. what `bench_tie_break.py`'s
+subclass already reconstructs) — and the CLI's built-in-kind dispatch
+(`cli_common.make_player`, SPEC.md §8) gains a matching name, e.g. `perfect-unranked`,
+alongside `perfect`. Each name is still exactly one fixed, calibrated configuration —
+`perfect` does not change — so a results file (SPEC.md §6) keeps meaning what it
+already means; a match simply gets to choose which of two (eventually three, once a
+mistake-model heuristic exists — SPEC-rl-player.md, "The mistake model") stably-named
+players it wants. `tools/bench_tie_break.py`'s subclass becomes redundant once this
+lands and can be replaced with the constructor option directly.
 
 ## Where the table comes from
 
