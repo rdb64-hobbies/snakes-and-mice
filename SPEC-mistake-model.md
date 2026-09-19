@@ -27,10 +27,14 @@
 > that feature currently stands: replicated on 2 of 3 models tried, at a
 > smaller and noisier magnitude than first measured, with one model showing no
 > effect so far; and a second, not-yet-decisive lead (recency of placement)
-> found while testing that (see "Generalizing across models" below). Left for
-> later: the model's exact weights and thresholds beyond its current single
-> feature (§"The mistake model"), and how either consumer actually implements
-> its role, which is specified in that consumer's own document.
+> found while testing that (see "Generalizing across models" below).
+> **The score itself exists as of 1.8** — the `mistake_model` module, three
+> levels over one feature (see "The score, as implemented" below) — along with
+> the third of its roles, `perfect-mistake-model`; the other two wait on the RL
+> player. Left for later: the model's exact weights and thresholds beyond its
+> current single feature (§"The mistake model"), and how the remaining consumer
+> actually implements its roles, which is specified in that consumer's own
+> document.
 
 ## Finding out whether the premise holds
 
@@ -70,9 +74,12 @@ specification, only how it is being used here:
 ### How the measurement is run
 
 No special tooling: this is `play-match` with `--flag-mistakes` and
-`--mistakes-file` (SPEC.md §5, §7), against `perfect` — whose trap-ranking (SPEC.md
-§10) makes it the best available provoker of a fallible opponent, and the closest
-stand-in for what a trained exploiter would itself be. Because a match fixes sides
+`--mistakes-file` (SPEC.md §5, §7), against the trap-ranking perfect player — whose
+ranking (SPEC.md §10) makes it the best available provoker of a fallible opponent, and
+the closest stand-in for what a trained exploiter would itself be. It was named
+`perfect` when these measurements were run and is `perfect-trappiness` as of 1.8
+(SPEC-perfect-player.md, "Selecting a variant"); the bare name now selects the
+unranked player, which would provoke less. Because a match fixes sides
 for its whole duration (SPEC.md §5), covering both seats means running it twice.
 
 That the general capability and this investigation's needs turned out to be the
@@ -325,11 +332,45 @@ probing turns up a line-type or side-dependent effect that survives the same
 matched-position treatment, it belongs back in this list on that basis, not on a
 failure-breakdown alone.
 
-None of the actual weights or thresholds are decided here — only that this is
-the feature worth starting from. A second candidate — recency of placement —
-turned up after this section was written; it is documented (§"Generalizing
-across models," below) but deliberately kept out of this list, since its
-evidence does not yet meet the same bar this one does.
+This list decides only which feature is worth starting from; how it is turned
+into a number is "The score, as implemented," below. A second candidate —
+recency of placement — turned up after this section was written; it is
+documented (§"Generalizing across models," below) but deliberately kept out of
+this list, since its evidence does not yet meet the same bar this one does.
+
+### The score, as implemented (1.8)
+
+The one feature above, made arithmetic. On a position with the **defender** to
+move, a **live threat** is a line holding three or more of the attacker's
+pieces and none of the defender's — one or two gaps, either of which wins next
+turn, since a move places two pieces (SPEC.md §2.5). The defender answers a
+threat by playing any empty cell of that line, which kills it for good
+(SPEC.md §2.7). The score is then one of three levels:
+
+| Score | Condition |
+|---:|---|
+| 0 | fewer than two live threats |
+| 1 | two or more, and one row- or column-**aligned** move answers them all |
+| 2 | two or more, and no aligned move does — the defender must **split** |
+
+Level 0 is the measured baseline that a lone threat is defended reliably
+whatever its line type (§"Isolated single threats are almost never missed"),
+so it is no reason to prefer one move over another. Level 2 is the measured
+feature itself: a threat set requiring two pieces in different rows *and*
+different columns, against a habit of placing them in one (§"A second lever").
+Alignment means a shared row or column only, not a diagonal — that is the
+measured habit, and the only alignment with a lexical cue in the move history
+an LLM reconstructs the board from. A threat set no *pair* of cells can cover
+is a forced win rather than a defensive problem; it lands in level 2 by the
+same rule rather than needing a case of its own, no aligned pair covering it
+either.
+
+Three coarse levels rather than a tuned formula is the deliberate reading of
+§"What validation means for a shaping term": only the **direction** of this
+feature is validated, and with a single feature in the model there is no second
+term to weigh it against. A finer score would be asserting precision the
+evidence does not carry. Promoting a second feature is what forces the weight
+question, and it is that promotion's to answer.
 
 ### Three roles, one function
 
@@ -343,11 +384,11 @@ The same score serves three consumers:
 - As the **ranking function** for [`SPEC-rl-player.md`](SPEC-rl-player.md),
   "The loop," step 3 ("densify") — which constructed positions are worth
   spending a live-LLM query on, rather than probing uniformly.
-- As the **tie-break key for `perfect-mistake-model`**, decided 2026-09-18
-  ([`SPEC-perfect-player.md`](SPEC-perfect-player.md), "Selecting a variant"):
-  among moves already tied on the exact trap count, that variant prefers
-  whichever leaves the opponent facing the higher score, in place of the
-  trappiness variant's liveness key. It replaces liveness rather than joining
+- As the **tie-break key for `perfect-mistake-model`**, decided 2026-09-18 and
+  shipped in 1.8 ([`SPEC-perfect-player.md`](SPEC-perfect-player.md),
+  "Selecting a variant"): among moves already tied on the exact trap count,
+  that variant prefers whichever leaves the opponent facing the higher score,
+  in place of the trappiness variant's liveness key. It replaces liveness rather than joining
   it because both exist for the same reason — approximating exploitability
   where exact trap-counting is too deep to run — and this score is the
   better-evidenced approximation of the two.

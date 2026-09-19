@@ -19,10 +19,11 @@ from snakes_and_mice.board import Board
 from snakes_and_mice.players.perfect import (
     _ALL_DRAWN_ABOVE_EMPTIES,
     _CELLS_BY_INDEX,
-    _LIVENESS_MAX_EMPTIES,
+    _SECONDARY_KEY_MAX_EMPTIES,
     _WIN,
     _Candidate,
     PerfectPlayer,
+    TieBreak,
     evaluate,
 )
 from snakes_and_mice.players.symmetry import CELL_COUNT, canonical_key
@@ -276,17 +277,18 @@ def _pool_and_best(
     return pool, best
 
 
+@pytest.mark.parametrize("policy", list(TieBreak))
 def test_tie_break_never_changes_the_value_achieved(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    policy: TieBreak, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # The whole design rests on this: narrowing a pool of equally optimal moves is
     # free. However the keys rank it, the move played must still achieve the best
-    # value — so the player is exactly as perfect as it was before ranking existed.
+    # value — so every variant is exactly as perfect as the others.
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
     rng = random.Random(7)
     checked = 0
     for trial in range(40):
-        player = PerfectPlayer(rng=random.Random(trial))
+        player = PerfectPlayer(rng=random.Random(trial), tie_break=policy)
         player.start_game(Side.MOUSE, Cell.from_label("C3"))
         found = _random_position(player, 10, rng)
         if found is None:
@@ -310,14 +312,15 @@ def test_tie_break_never_changes_the_value_achieved(
     assert checked >= 20, "too few positions exercised to mean anything"
 
 
+@pytest.mark.parametrize("policy", [TieBreak.TRAPPINESS, TieBreak.MISTAKE_MODEL])
 def test_the_opening_is_left_uniformly_random(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    policy: TieBreak, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # The point of the gates: at the top of the tree every reply is drawn, so no key
     # can discriminate and none may narrow. A deterministic opening would make two
     # deterministic players replay one identical game per seed (§5).
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
-    player = PerfectPlayer(rng=random.Random(1))
+    player = PerfectPlayer(rng=random.Random(1), tie_break=policy)
     player.start_game(Side.MOUSE, Cell.from_label("C3"))
     mouse, snake = player._masks()
     empties = player._empty_indices(mouse | snake)
@@ -337,25 +340,26 @@ def test_the_opening_is_left_uniformly_random(
     assert player._most_trapping(list(pool), 0, len(empties), 0) is not None
     assert len(player._most_trapping(list(pool), 0, len(empties), 0)) == len(pool)
     assert len(empties) - 4 >= _ALL_DRAWN_ABOVE_EMPTIES
-    assert len(empties) > _LIVENESS_MAX_EMPTIES
+    assert len(empties) > _SECONDARY_KEY_MAX_EMPTIES
 
     # ...so the pick really is spread over the whole pool.
     seen = {player._pick(list(pool), 0, len(empties), 0) for _ in range(400)}
     assert len(seen) > 150, f"opening collapsed to {len(seen)} distinct moves"
 
 
+@pytest.mark.parametrize("policy", [TieBreak.TRAPPINESS, TieBreak.MISTAKE_MODEL])
 def test_chosen_move_maximizes_the_trap_count(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    policy: TieBreak, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # When the count does discriminate, the played move must be one of the moves that
     # gives the opponent the most ways to go wrong — that is the entire mechanism.
-    # The liveness key cannot disturb this: it narrows *within* whatever the trap
-    # count leaves, so the pick stays inside the trap-maximal set.
+    # Neither policy's second key can disturb it: each narrows *within* whatever the
+    # trap count leaves.
     monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
     rng = random.Random(11)
     discriminating = 0
     for trial in range(60):
-        player = PerfectPlayer(rng=random.Random(trial))
+        player = PerfectPlayer(rng=random.Random(trial), tie_break=policy)
         player.start_game(Side.MOUSE, Cell.from_label("C3"))
         found = _random_position(player, 10, rng)
         if found is None:
@@ -454,6 +458,71 @@ def test_liveness_rewards_concentration_over_breadth() -> None:
 
     # And a line the opponent has touched is spent: it can never be completed.
     assert PerfectPlayer._liveness(mask("A1", "A2", "A3"), mask("A4")) < concentrated
+
+
+# --- Selecting a variant (§10) ---------------------------------------------------
+#
+# That every variant stays perfect is asserted by the parametrized tests above; what
+# is left is that the option actually selects a different policy.
+
+
+def test_the_constructor_defaults_to_no_ranking() -> None:
+    assert PerfectPlayer()._tie_break is TieBreak.NONE
+
+
+def test_unranked_leaves_a_discriminating_pool_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A pool the keys *would* have narrowed is picked from uniformly instead.
+    # Finding a position where ranking discriminates is what makes this more than a
+    # restatement of the default.
+    monkeypatch.setenv("SNAKES_AND_MICE_TABLE_DIR", str(tmp_path / "absent"))
+    rng = random.Random(11)
+    for trial in range(60):
+        ranked = PerfectPlayer(
+            rng=random.Random(trial), tie_break=TieBreak.TRAPPINESS
+        )
+        ranked.start_game(Side.MOUSE, Cell.from_label("C3"))
+        found = _random_position(ranked, 10, rng)
+        if found is None:
+            continue
+        mouse, snake, depth = found
+        empties = len(ranked._empty_indices(mouse | snake))
+        pool, best = _pool_and_best(ranked, mouse, snake, depth)
+        narrowed = ranked._most_trapping(list(pool), best, empties, depth)
+        if len(narrowed) == len(pool):
+            continue  # ranking buys nothing here; keep looking
+
+        unranked = PerfectPlayer(rng=random.Random(trial), tie_break=TieBreak.NONE)
+        unranked.start_game(Side.MOUSE, Cell.from_label("C3"))
+        spread = {unranked._pick(list(pool), best, empties, depth) for _ in range(200)}
+        assert spread - {c.move for c in narrowed}, (
+            "the unranked pick stayed inside what ranking would have chosen"
+        )
+        return
+    pytest.fail("no position found where ranking discriminates; test proves nothing")
+
+
+def test_the_mistake_model_key_replaces_liveness_rather_than_joining_it() -> None:
+    # Two candidates liveness separates but the mistake model ties: unnarrowed
+    # under `mistake-model`, narrowed under `trappiness`.
+    def mask(*labels: str) -> int:
+        return sum(
+            1 << (Cell.from_label(x).row * 5 + Cell.from_label(x).col) for x in labels
+        )
+
+    # Neither holds two live threats, so both score 0; liveness separates them.
+    pool = [
+        _Candidate(Move.of(Cell.from_label("A2"), Cell.from_label("A3")),
+                   mask("A1", "A2", "A3"), mask("C3")),
+        _Candidate(Move.of(Cell.from_label("B3"), Cell.from_label("D5")),
+                   mask("A1", "B3", "D5"), mask("C3")),
+    ]
+    player = PerfectPlayer(rng=random.Random(1), tie_break=TieBreak.MISTAKE_MODEL)
+    player.start_game(Side.MOUSE, Cell.from_label("C3"))
+
+    assert len(player._most_exploitable(list(pool))) == 2
+    assert len(player._liveliest(list(pool))) == 1
 
 
 # --- Grading another player's moves against ground truth (evaluate) ---------------

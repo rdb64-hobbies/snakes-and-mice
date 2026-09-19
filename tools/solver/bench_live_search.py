@@ -23,7 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from snakes_and_mice.core import BOARD_SIZE, Cell, Side
-from snakes_and_mice.players.perfect import PerfectPlayer
+from snakes_and_mice.players.perfect import PerfectPlayer, TieBreak
 from snakes_and_mice.players.symmetry import CELL_COUNT
 
 FULL: int = (1 << CELL_COUNT) - 1
@@ -68,7 +68,11 @@ def main() -> None:
         mouse: int = (key >> CELL_COUNT) & FULL
         snake: int = key & FULL
 
-        player: PerfectPlayer = PerfectPlayer(rng=random.Random(1))
+        # Ranking is part of what a move costs, so ask for it: the constructor
+        # defaults to no ranking.
+        player: PerfectPlayer = PerfectPlayer(
+            rng=random.Random(1), tie_break=TieBreak.TRAPPINESS
+        )
         # The canonical form places the seed somewhere in its orbit, so take the seed
         # from the position itself rather than assuming the run's label.
         snake_cells: list[Cell] = _cells(snake)

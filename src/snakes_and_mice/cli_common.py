@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from .roster import Roster
@@ -21,11 +23,53 @@ from .core import Cell, Side
 from .faults import IllegalMove
 from .mistakes import DEFAULT_MISTAKES_PATH, MistakeObserver
 from .observer import BroadcastObserver, ObservationLevel, Observer
-from .players import HumanPlayer, LLMPlayer, PerfectPlayer, Player, RandomPlayer
+from .players import (
+    HumanPlayer,
+    LLMPlayer,
+    PerfectPlayer,
+    Player,
+    RandomPlayer,
+    TieBreak,
+)
 
 SEED_DEFAULT: str = "random"
 
-BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random", "perfect"})
+RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
+
+
+@dataclass(frozen=True)
+class PerfectVariant:
+    """One CLI name for the perfect player: a fixed policy and its display names.
+
+    Display names are per variant, not shared, so each policy is its own player in
+    a results file (§10, "Selecting a variant").
+    """
+
+    tie_break: TieBreak
+    names: Mapping[Side, str]
+
+
+PERFECT_VARIANTS: Mapping[str, PerfectVariant] = {
+    "perfect": PerfectVariant(
+        TieBreak.NONE, {Side.MOUSE: "Percy", Side.SNAKE: "Perseus"}
+    ),
+    "perfect-trappiness": PerfectVariant(
+        TieBreak.TRAPPINESS, {Side.MOUSE: "Tricky", Side.SNAKE: "Trickster"}
+    ),
+    "perfect-mistake-model": PerfectVariant(
+        TieBreak.MISTAKE_MODEL, {Side.MOUSE: "Missy", Side.SNAKE: "Mistral"}
+    ),
+}
+"""The built-in perfect players, one fixed configuration each (§10, "Selecting a
+variant").
+
+Every name passes its policy explicitly, so each stays pinned to what it names
+whatever :class:`~snakes_and_mice.players.TieBreak`'s default later becomes.
+"""
+
+BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random"}) | frozenset(
+    PERFECT_VARIANTS
+)
 """The player kinds that are *not* roster names — anything else names an LLM.
 
 This answers one question only: how to build the player, and hence whether the
@@ -33,13 +77,16 @@ roster has to be loaded at all. Which sides are worth *grading* is a separate
 question with its own answer, :data:`NON_GRADABLE_KINDS`.
 """
 
-NON_GRADABLE_KINDS: frozenset[str] = frozenset({"human", "random", "perfect"})
+NON_GRADABLE_KINDS: frozenset[str] = frozenset({"human", "random"}) | frozenset(
+    PERFECT_VARIANTS
+)
 """The player kinds mistake-flagging has nothing to say about (§5).
 
-Two of these fail in opposite directions: ``perfect`` can never register a
-mistake, being the ground truth every move is graded against, while ``random``
-would register one on nearly every turn — so a stream of callouts from either
-carries no signal. ``human`` is left out as not being an object of measurement.
+Two of these fail in opposite directions: no ``perfect`` variant can ever
+register a mistake, being the ground truth every move is graded against, while
+``random`` would register one on
+nearly every turn — so a stream of callouts from either carries no signal.
+``human`` is left out as not being an object of measurement.
 
 Deliberately a separate set from :data:`BUILTIN_KINDS`, which it happens to equal
 today. The two answer different questions and are expected to diverge: a
@@ -48,8 +95,6 @@ reinforcement-learning player (§3) would be built in like ``perfect`` and
 grading.
 """
 
-RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
-PERFECT_NAME: dict[Side, str] = {Side.MOUSE: "Percy", Side.SNAKE: "Perseus"}
 DEFAULT_LOG_DIR: str = "llm-logs"
 DEFAULT_RESULTS_PATH: Path = Path("tournament-results.jsonl")
 """Where the tournament results file (§6) lives unless a command overrides it."""
@@ -82,15 +127,16 @@ def make_player(
     kind: str, side: Side, roster: Roster | None, log_dir: Path | None,
     *, prune_thinking: bool = False,
 ) -> Player:
-    """Build the player for one side. ``kind`` is ``random``, ``human``,
-    ``perfect``, or an LLM roster name (in which case ``roster`` must be loaded).
-    ``prune_thinking`` applies only to LLM players (§4)."""
+    """Build the player for one side. ``kind`` is ``random``, ``human``, one of the
+    :data:`PERFECT_VARIANTS` names, or an LLM roster name (in which case ``roster``
+    must be loaded). ``prune_thinking`` applies only to LLM players (§4)."""
     if kind == "human":
         return HumanPlayer(name=SECOND_PERSON)
     if kind == "random":
         return RandomPlayer(name=RANDOM_NAME[side])
-    if kind == "perfect":
-        return PerfectPlayer(name=PERFECT_NAME[side])
+    variant: PerfectVariant | None = PERFECT_VARIANTS.get(kind)
+    if variant is not None:
+        return PerfectPlayer(name=variant.names[side], tie_break=variant.tie_break)
     assert roster is not None  # a roster is loaded whenever an LLM name is used
     return LLMPlayer.from_roster(
         kind, roster, prune_thinking=prune_thinking, log_dir=log_dir

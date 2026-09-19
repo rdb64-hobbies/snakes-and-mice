@@ -43,7 +43,9 @@ def main(argv: list[str] | None = None) -> None:
     By default two random bots play a single game at ``move`` detail. Pass
     ``--games N`` for a longer match and ``--watch match|game|move`` to choose
     how much is shown. ``--mouse`` and ``--snake`` each name who plays that side:
-    ``random``, ``human``, ``perfect`` (the perfect algorithmic player), or an LLM
+    ``random``, ``human``, one of the three perfect algorithmic players
+    (``perfect``, ``perfect-trappiness``, ``perfect-mistake-model`` — all optimal,
+    differing only in how they choose among equally optimal moves, §10), or an LLM
     roster name from ``players.yaml``. A human at
     the board always forces ``move`` detail (with a note), since a human must see
     every move to play it. ``--seed`` sets where the snake is seeded each game:
@@ -58,13 +60,13 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--mouse", default="random", metavar="WHO",
-        help="who plays Mouse: random, human, perfect, or an LLM roster name "
-             "(default: random)",
+        help="who plays Mouse: random, human, perfect, perfect-trappiness, "
+             "perfect-mistake-model, or an LLM roster name (default: random)",
     )
     parser.add_argument(
         "--snake", default="random", metavar="WHO",
-        help="who plays Snake: random, human, perfect, or an LLM roster name "
-             "(default: random)",
+        help="who plays Snake: random, human, perfect, perfect-trappiness, "
+             "perfect-mistake-model, or an LLM roster name (default: random)",
     )
     parser.add_argument(
         "--games", type=int, default=1, metavar="N",
@@ -138,7 +140,8 @@ def main(argv: list[str] | None = None) -> None:
         watch = "move"
     wants_mistakes: bool = args.flag_mistakes or mistakes_path is not None
     if wants_mistakes and not gradable:
-        # Nothing to grade: `perfect` never errs and `random` always does (§5).
+        # Nothing to grade: no `perfect` variant ever errs, and `random` always
+        # does (§5).
         print("(neither player is gradable — nothing to flag mistakes for)\n")
     try:
         result: MatchResult = play_match(

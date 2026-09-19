@@ -12,7 +12,8 @@
 > decided so far — the goal, including the need for two non-learned baselines to
 > measure the result against, `perfect` with no heuristic and `perfect` with only
 > the one validated bias feature (both specified in SPEC-perfect-player.md,
-> "Selecting a variant"); the overall training strategy (why training directly
+> "Selecting a variant", and both shipped in 1.8 as the bare `perfect` and
+> `perfect-mistake-model`); the overall training strategy (why training directly
 > against a live LLM cannot be the primary loop, the six-step loop itself, and
 > why the mistake model's shaping term is needed to reward progress toward a
 > rare, high-value intermediate state before any terminal win or loss — see
@@ -21,8 +22,8 @@
 > MLP, a factored sequential two-cell policy head — see "The algorithm and
 > network" below); and periodically training and evaluating against real
 > LLMs alongside self-play (see "Periodic fine-tuning" below). Left for later:
-> everything below the architecture level — training hyperparameters,
-> curriculum details, and the two `perfect` variants' own implementation. The
+> everything below the architecture level — training hyperparameters and
+> curriculum details. The
 > mistake model itself — whether LLM mistakes are exploitable at all, what they
 > look like, and the scoring function's exact form — is decided and measured in
 > [`SPEC-mistake-model.md`](SPEC-mistake-model.md), not here.
@@ -51,14 +52,15 @@ though it cannot out-score optimal play in the game-theoretic sense.
 - **The actual bar is comparative, not absolute.** "Beats LLM X more often than
   the perfect player does" is the success criterion — not merely "wins some games
   against LLM X."
-- **The comparison needs `perfect` with no heuristic, not `perfect` as shipped.**
-  `perfect` already ranks among equally optimal moves to exploit a fallible
+- **The comparison needs a perfect player with no heuristic.**
+  `perfect-trappiness` ranks among equally optimal moves to exploit a fallible
   opponent (SPEC.md §10, "Choosing among optimal moves"). Measuring the RL player
   against that ranked version can't distinguish "the RL player found something
   real" from "it merely matches what the existing hand-coded ranking already
-  does" — the clean comparison is against ranking switched off entirely.
-  SPEC-perfect-player.md, "Selecting a variant" specifies this as a planned,
-  separately-named, still-unimplemented `perfect` variant.
+  does" — the clean comparison is against ranking switched off entirely. As of
+  1.8 that is the **bare `perfect`** (SPEC-perfect-player.md, "Selecting a
+  variant"), which is why this bullet no longer asks for anything special: the
+  unadorned name is the unadorned player.
 - **The comparison also needs a non-learned upper bound that already knows the
   one validated bias feature.** Beating `perfect`-with-no-heuristic is a low
   bar — it isn't even trying to exploit anything. The RL player's real claim is
@@ -67,7 +69,7 @@ though it cannot out-score optimal play in the game-theoretic sense.
   model") could not. That claim needs the hand-coded rule shipped as a player,
   not just as a shaping term internal to training — SPEC-perfect-player.md,
   "Selecting a variant" specifies this as the third `perfect` variant,
-  `perfect-mistake-model`.
+  `perfect-mistake-model`, also shipped in 1.8.
 
 ## Training strategy
 
@@ -98,7 +100,7 @@ resource deliberately rather than burning it as ordinary training volume.
 2. **Play a strong opponent against the target LLM live**, for a modest number of
    games, to find the *on-policy* states worth caring about — the states a strong
    player actually reaches, not an arbitrary sample of the astronomically large
-   full game tree. (`perfect` already exists and already ranks moves for
+   full game tree. (`perfect-trappiness` already exists and already ranks moves for
    "trappiness" among ties — SPEC.md §10, "Choosing among optimal moves" — so it is
    available for this today, without waiting on step 1's agent to exist.)
 3. **Densify around those states** by constructing positions directly rather than

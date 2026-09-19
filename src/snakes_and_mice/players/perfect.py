@@ -28,23 +28,24 @@ injectable :class:`random.Random` used only to break ties among equally optimal
 moves — so a seeded instance is fully reproducible.
 
 Because the game is drawn from every seed, nearly every real decision is a choice
-among moves that all score zero, and which one is played cannot change the result
-against perfect defence. It can change the result against a *fallible* opponent, so
-the pool is ranked before the random pick (§10, "Choosing among optimal moves"):
-first by how many of the opponent's replies would throw the position away, then by
-how much winning potential the move keeps alive. Both keys are applied **only where
-they provably discriminate**, so the choice stays uniformly random wherever ranking
-would merely make play predictable.
+among moves that all score zero. Which one is played cannot change the result
+against perfect defence, but it can against a *fallible* one, so the pool may be
+ranked before the random pick. Which ranking — if any — is the :class:`TieBreak`
+constructor option, fixed for the life of the instance (§10, "Choosing among optimal
+moves", "Selecting a variant"). Every key is applied only where it provably
+discriminates, leaving the pick uniformly random elsewhere.
 """
 
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from enum import Enum
 from itertools import combinations
 
 from ..board import LINES, Board
 from ..core import BOARD_SIZE, Cell, Move, MoveChoice, Side
+from ..mistake_model import threat_score
 from .base import Player
 from .symmetry import CELL_COUNT, canonical_key
 from .table import PerfectTable, load_for_seed
@@ -73,13 +74,30 @@ costs ~18–23 s at 16 empty cells, on a move the Mouse makes in nearly every ga
 these gates.
 """
 
-_LIVENESS_MAX_EMPTIES: int = 18
-"""Shallowest node at which the liveness key may narrow the pool.
+_SECONDARY_KEY_MAX_EMPTIES: int = 18
+"""Shallowest node at which the key *after* the trap count may narrow the pool.
 
-It is a deterministic key, so letting it decide the opening would replay one game per
-seed. By 18 empty cells the position has already branched widely enough that a
-deterministic choice cannot funnel every game into the same line.
+Shared by both second keys, liveness and the mistake-model score: each is
+deterministic, so letting one decide the opening would replay a single game per seed
+(§10).
 """
+
+
+class TieBreak(Enum):
+    """How a player chooses among moves that are all exactly as good (§10).
+
+    Fixed when the player is constructed. Every policy is perfect: each ranks only
+    within a pool of equally optimal moves.
+    """
+
+    NONE = "none"
+    """Uniformly at random over the whole pool."""
+
+    TRAPPINESS = "trappiness"
+    """Trap count, then liveness."""
+
+    MISTAKE_MODEL = "mistake-model"
+    """Trap count, then the mistake-model score in liveness's place."""
 
 # Alpha–beta bound flags for a stored value: exact, a lower bound (fail-high), or
 # an upper bound (fail-low).
@@ -139,10 +157,14 @@ class PerfectPlayer(Player):
     """Plays a game-theoretically optimal move every turn (§10)."""
 
     def __init__(
-        self, name: str | None = None, rng: random.Random | None = None
+        self,
+        name: str | None = None,
+        rng: random.Random | None = None,
+        tie_break: TieBreak = TieBreak.NONE,
     ) -> None:
         super().__init__(name)
         self._rng: random.Random = rng if rng is not None else random.Random()
+        self._tie_break: TieBreak = tie_break
         self._board: Board = Board()
         self._side: Side | None = None
         # Value + bound flag per canonical position. Cleared each game: the table
@@ -279,12 +301,20 @@ class PerfectPlayer(Player):
         where it provably discriminates**: a key that ranks every candidate alike
         leaves the pool untouched, so the fallback is always the uniform random pick
         that keeps games from repeating (§10).
+
+        Which keys run is this instance's :class:`TieBreak`. Both ranking policies
+        open with the trap count and differ only in the key after it.
         """
         if len(pool) == 1:
             return pool[0].move
-        pool = self._most_trapping(pool, best, empties, depth)
-        if empties <= _LIVENESS_MAX_EMPTIES:
-            pool = self._liveliest(pool)
+        if self._tie_break is not TieBreak.NONE:
+            pool = self._most_trapping(pool, best, empties, depth)
+            if empties <= _SECONDARY_KEY_MAX_EMPTIES:
+                pool = (
+                    self._liveliest(pool)
+                    if self._tie_break is TieBreak.TRAPPINESS
+                    else self._most_exploitable(pool)
+                )
         return self._rng.choice(pool).move
 
     def _most_trapping(
@@ -409,10 +439,23 @@ class PerfectPlayer(Player):
         lie deeper than one reply, in the band where counting them exactly is too
         slow. As with every key here, a tie leaves the pool untouched.
         """
-        assert self._side is not None
-        scores: list[int] = [
-            self._liveness(*self._ours_theirs(c.mouse, c.snake)) for c in pool
-        ]
+        return self._narrow(
+            pool, [self._liveness(*self._ours_theirs(c.mouse, c.snake)) for c in pool]
+        )
+
+    def _most_exploitable(self, pool: list[_Candidate]) -> list[_Candidate]:
+        """Narrow to the candidates leaving the opponent the hardest defence.
+
+        :attr:`TieBreak.MISTAKE_MODEL`'s second key, replacing :meth:`_liveliest`
+        (§10, "The third variant's tie-break").
+        """
+        return self._narrow(
+            pool, [threat_score(*self._ours_theirs(c.mouse, c.snake)) for c in pool]
+        )
+
+    @staticmethod
+    def _narrow(pool: list[_Candidate], scores: list[int]) -> list[_Candidate]:
+        """Keep the top-scoring candidates, or all of them if the key ties."""
         top: int = max(scores)
         if top == min(scores):
             return pool
@@ -420,6 +463,7 @@ class PerfectPlayer(Player):
 
     def _ours_theirs(self, mouse: int, snake: int) -> tuple[int, int]:
         """The (ours, theirs) masks of a position, from this player's side."""
+        assert self._side is not None
         return (mouse, snake) if self._side is Side.MOUSE else (snake, mouse)
 
     def _negamax(

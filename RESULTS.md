@@ -13,8 +13,9 @@ section will cover frontier (hosted-API) models.
 
 Each of the six played a fixed 40-game match against a perfect algorithmic
 player, to see how cleanly it plays against an opponent that never itself
-errs. The four that came through cleanest then played a round-robin against
-each other (§1.3); the other two were excluded from that stage.
+errs (the opponent throughout is `perfect-trappiness`). The four that came
+through cleanest then played a round-robin against each other (§1.3); the other
+two were excluded from that stage.
 
 ### 1.1 Cleanliness against perfect play, and how the six reason
 

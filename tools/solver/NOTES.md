@@ -49,6 +49,11 @@ expand/dedup timing split in the forward pass, and this file.
   tiebreak. **Correct** on constructed positions; only the opening scale is the issue.
 - Wiring: `players/__init__.py`, `snakes_and_mice/__init__.py`, `cli_common.py`
   (names **Percy** = Mouse, **Perseus** = Snake; CLI kind `perfect`), `match_cli.py`.
+  *Superseded 2026-09-18 (1.8): `perfect` is now three names, one per tie-break
+  policy, each with its own display names. Percy/Perseus stayed with the bare
+  name, which now selects the **unranked** player; the trap-ranking one this note
+  described is `perfect-trappiness` (Tricky/Trickster). See
+  SPEC-perfect-player.md, "Selecting a variant".*
 - `pyproject.toml` — added `numpy>=2.1` to the dev group (solver-only). *Clarified
   2026-08-19: this note originally read "the runtime player must stay numpy-free", and
   that phrasing propagated into SPEC §10 as a hard requirement. It never was one. The

@@ -1007,8 +1007,10 @@ and an `Observer` (§3) watching at a selectable **observation level**
 player's own input paces a game.
 
 **`play-match`** — play or watch a **single match**. `--mouse` and `--snake` each
-name who plays that side: `random`, `human`, `perfect` (the perfect algorithmic
-player, §10), or an **LLM roster name** from `players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
+name who plays that side: `random`, `human`, one of the three perfect algorithmic
+players (`perfect`, `perfect-trappiness`, `perfect-mistake-model` — all optimal,
+differing only in how they choose among equally optimal moves, §10), or an **LLM
+roster name** from `players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
 for the match (§5); `--seed` sets where the snake is seeded each game — `random`
 (the default: a fresh cell per game) or a fixed cell like `B3` (§2.4, §5);
 `--watch` defaults to `move`. If either player is human the
@@ -1074,6 +1076,14 @@ Rough module layout:
   several observers from the one the engine accepts — watching a match and
   annotating it (`mistakes`, below) are separate concerns that compose, and neither
   needs to know the other exists.
+- `mistake_model` — the hand-crafted score for how hard a position is for a
+  *fallible* defender to hold, built from the one measured bias feature
+  (`SPEC-mistake-model.md`, "The mistake model"). Pure position scoring, depending on
+  nothing but the board, because it has several consumers that share nothing else:
+  the `perfect-mistake-model` tie-break key today (§10), and the RL player's shaping
+  term and data-collection ranking (`SPEC-rl-player.md`) later. Not to be confused
+  with `mistakes` below, which detects mistakes that *were* made; this one scores how
+  likely one is.
 - `mistakes` — flagging mistakes (§5): the `Mistake` record, its JSON encoding, and
   the observer that grades a match by diffing `evaluate` (§10) across every move by
   the sides it was handed. Detection lives here; board rendering stays in `console`,
@@ -1143,9 +1153,9 @@ What the rest of this document relies on:
   construction, returns `claimed_outcome = None`, and never faults or misreads an
   outcome. Its only injected dependency is a `random.Random`, so a seeded instance is
   reproducible.
-- It is a **built-in player named `perfect`**, selected exactly like `random`
-  wherever a side is named (§7). Like `random`, it is **not** part of the
-  `players.yaml` tournament roster (§4, §6).
+- It is a **built-in player**, selected by name exactly like `random` wherever a side
+  is named (§7). It answers to three names, one per tie-break policy (below). Like
+  `random`, none of them is part of the `players.yaml` tournament roster (§4, §6).
 - It is **two-tier**: an offline retrograde solve supplies an opening table, and the
   endgame is searched live. Both tiers return the same values, so the seam is
   invisible. A missing table is not an error — the player falls back to searching the
@@ -1154,15 +1164,18 @@ What the rest of this document relies on:
   not only used internally to pick this player's own move. It is the primitive §5's
   mistake-flagging builds on, to grade *any* player's actual move against ground
   truth.
-- Among equally optimal moves it **ranks for trappiness** rather than picking blindly,
-  which is what makes it dangerous to a fallible opponent without ever risking the
-  draw. `perfect` itself always ranks this way, so its name stays one calibrated
-  yardstick — but which ranking a match uses is planned to become a choice of *which
-  built-in name* to play, not a flag on this one (SPEC-perfect-player.md, "Selecting a
-  variant"): an unranked `perfect-unranked` and a `perfect-mistake-model` that ranks
-  by a hand-coded LLM-bias feature instead of trappiness, the two non-learned
-  baselines SPEC-rl-player.md needs to measure the RL player against. Not yet
-  implemented.
+- **Which ranking it applies among equally optimal moves is a choice of *name*, never
+  a flag** (SPEC-perfect-player.md, "Selecting a variant"). `perfect` picks among them
+  uniformly — the unadorned player, matching the unadorned name.
+  `perfect-trappiness` prefers the moves leaving a fallible opponent the most ways to
+  go wrong, which makes it dangerous without ever risking the draw, and
+  `perfect-mistake-model` ranks by a hand-coded LLM-bias feature instead; those two
+  are the non-learned baselines SPEC-rl-player.md needs to measure the RL player
+  against. All three are equally optimal and each has its own display names, so a
+  results file (§6) reads one strength per name. **`perfect` meant the trappiness
+  player before 1.8**, under the display names the bare name still carries, so results
+  recorded under them before and after 1.8 are not comparable — the one deliberate
+  exception to that rule, taken knowingly.
 - **The game is a draw.** All four seed classes are solved; every seed is drawn under
   perfect play, which settles the game-balance question §11 lists as out of scope for
   _perfect_ players (it says nothing about fallible ones).
@@ -1235,7 +1248,20 @@ progress toward that, not incidental churn.
     first measure of *how well* a model played rather than only what it scored — a
     fault tally (§6) is silent on a legal move that quietly loses the game. It needs
     no new analysis to be trustworthy: the game is solved (§10), so the perfect
-    player's own evaluation, exposed as `evaluate`, decides it exactly. _(current)_
+    player's own evaluation, exposed as `evaluate`, decides it exactly.
+  - **1.8** — the algorithmic player's tie-break made **selectable by name** (§10,
+    "Selecting a variant"). Three names now, each a fixed configuration under its own
+    display names, so a results file still reads one strength per name: `perfect` picks
+    uniformly among optimal moves, `perfect-trappiness` is the trap-ranking player, and
+    `perfect-mistake-model` ranks by the mistake model's one validated bias feature.
+    The latter two are the non-learned baselines the RL player will be measured against
+    (`SPEC-rl-player.md`), and shipping them also gives the mistake model
+    (`SPEC-mistake-model.md`) its first implementation, in the new `mistake_model`
+    module its other consumers will share. **The bare name changed meaning**: before
+    1.8 `perfect` was the trap-ranking player, so a Percy/Perseus row recorded before
+    1.8 is a stronger opponent than one recorded after. Deliberate, and the only time
+    it happens — the point of naming the variants is that it cannot happen again.
+    _(current)_
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic

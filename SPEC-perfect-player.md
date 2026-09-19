@@ -200,9 +200,14 @@ choice: since every candidate has the same minimax value, narrowing the pool can
 cost a draw or a win, and the player remains exactly as perfect however it picks.
 
 Against perfect defence the choice is genuinely irrelevant. Against a **fallible**
-opponent it is not, and the benchmark only ever plays fallible opponents. So the
-pool is **ranked before the pick**, to maximize the opponent's opportunities to go
-wrong, and the random pick is applied to whatever survives.
+opponent it is not, and the benchmark only ever plays fallible opponents. So the pool
+may be **ranked before the pick**, to maximize the opponent's opportunities to go
+wrong, with the random pick applied to whatever survives.
+
+This section describes one such ranking, the one the built-in player
+**`perfect-trappiness`** plays; the bare `perfect` does none of it and picks
+uniformly over the whole pool. Which rankings exist, and why each is a name of its
+own rather than a setting, is "Selecting a variant" below.
 
 **The keys, strongest first.**
 
@@ -254,61 +259,82 @@ the move choice itself (see "The opening table" below): the pool is left unranke
 rather than ranked on partial data.
 
 **What this is worth.** Against the random player — a maximally fallible opponent, so
-its loss rate is a direct estimate of P(the opponent goes wrong) — ranking lifts the
-perfect player from **62.3%** wins to **98.0%**, measured over 300 games per policy,
+its loss rate is a direct estimate of P(the opponent goes wrong) — this ranking lifts
+the perfect player from **62.3%** wins (what `perfect` scores, picking uniformly) to
+**98.0%** (`perfect-trappiness`), measured over 300 games per policy,
 and it **never loses a game under any policy**, as it cannot. Both keys earn their
 place: the exact trap count does most of the work and the liveness heuristic supplies
 the rest. The caveat on the numbers is that a random opponent misses traps uniformly
 whereas an LLM misses _subtle_ ones, so trap density is a proxy for that rather than a
 model of it, and the gain against a model will differ.
 
-Ranking is **not configurable on the name `perfect`**: that player always ranks. A
-flag that changed its behavior in place would make `perfect` mean two different
-strengths under one name, and a results file identifies a player by name alone
-(SPEC.md §6) — so the yardstick would stop being calibrated (SPEC.md §1). Until now
-the unranked baseline has only ever been reconstructed *outside* the player, by a
-throwaway subclass that restores the old pick;
-[`tools/bench_tie_break.py`](tools/bench_tie_break.py) does exactly that, and is how the
-comparison above is re-run whenever the keys or their gates change.
+Ranking is **not configurable on a name**: each name always does one thing. A flag
+that changed a player's behavior in place would make one name mean two different
+strengths, and a results file identifies a player by name alone (SPEC.md §6) — so the
+yardstick would stop being calibrated (SPEC.md §1). The ranking described in this
+section is therefore its own named player, `perfect-trappiness`, and the unranked
+baseline is the bare `perfect` (see "Selecting a variant" below);
+[`tools/bench_tie_break.py`](tools/bench_tie_break.py) plays the named variants against
+each other, and is how the comparison above is re-run whenever the keys or their gates
+change.
 
-### Selecting a variant (planned, not yet implemented)
+### Selecting a variant
 
 The RL player's evaluation needs the same unranked baseline as a first-class match
 participant, not a throwaway subclass internal to one benchmarking tool
-(SPEC-rl-player.md: comparing the RL player against `perfect`-with-ranking cannot
+(SPEC-rl-player.md: comparing the RL player against a ranking variant cannot
 distinguish "the RL player found something real" from "it merely matches what the
 existing hand-coded ranking already does" — the clean comparison is against ranking
 switched off entirely).
 
-The name-stability constraint above rules out a runtime flag on `perfect` itself, but
-not a **second, separately-named, equally fixed** built-in player: `PerfectPlayer`
-gains a constructor option selecting its tie-break policy from a small fixed set — at
-minimum `trappiness` (the ranking described above, `perfect`'s only behavior today)
-and `none` (uniform-random over the optimal pool, i.e. what `bench_tie_break.py`'s
-subclass already reconstructs) — and the CLI's built-in-kind dispatch
-(`cli_common.make_player`, SPEC.md §8) gains a matching name, e.g. `perfect-unranked`,
-alongside `perfect`. Each name is still exactly one fixed, calibrated configuration —
-`perfect` does not change — so a results file (SPEC.md §6) keeps meaning what it
-already means; a match simply gets to choose which of two (eventually three, once a
-mistake-model heuristic exists — SPEC-mistake-model.md, "The mistake model") stably-named
-players it wants. `tools/bench_tie_break.py`'s subclass becomes redundant once this
-lands and can be replaced with the constructor option directly.
+The name-stability constraint above rules out a runtime flag, but not **several
+separately-named, each equally fixed** built-in players. `PerfectPlayer` takes a
+constructor option, `tie_break`, selecting its policy from the fixed set `TieBreak` —
+`none` (uniform-random over the optimal pool), `trappiness` (the ranking described
+above), and `mistake-model` (below) — and the CLI's built-in-kind dispatch
+(`cli_common.make_player`, SPEC.md §8) carries a name per policy: `perfect`,
+`perfect-trappiness`, and `perfect-mistake-model`. Each name is exactly one fixed,
+calibrated configuration, so a match gets to choose which of the three it wants and a
+results file (SPEC.md §6) still reads one strength per name.
+
+**The bare name is the unadorned player.** `perfect` is the *unranked* variant,
+matching the constructor default and for the same reason (below): by the mathematical
+definition in "What perfect means" above, a perfect player is one that always returns
+an optimal move, and ranking among optimal moves is an added feature for exploiting a
+fallible opponent rather than part of that definition. A name that promises perfection
+should deliver exactly that and nothing extra; the extras announce themselves.
+
+**Each variant carries its own display names**, the pair a `MatchResult` actually
+records (SPEC.md §6): `perfect` is Percy/Perseus, `perfect-trappiness`
+Tricky/Trickster, and `perfect-mistake-model` Missy/Mistral, for Mouse and Snake
+respectively. Sharing one pair across variants would merge two calibrations into a
+single standings row, which is the very thing this whole section exists to prevent.
+
+**`perfect` did change meaning once, at 1.8**, and this is the one place the
+name-stability principle was deliberately spent rather than upheld: before 1.8 the
+name meant the trappiness-ranked player, which is now `perfect-trappiness`.
+Percy/Perseus stayed with the bare name, so **results recorded under those names
+before 1.8 describe a stronger opponent than results recorded under them after**, and
+an append-only results file (SPEC.md §6) will hold both, indistinguishably, under one
+row. The trade was taken knowingly, once, to make the bare name mean the unadorned
+player; the principle governs everything from here, and the three names are fixed.
+
+`tools/bench_tie_break.py` no longer reconstructs the unranked baseline in a throwaway
+subclass; it constructs each `TieBreak` directly, so it measures exactly the players a
+match can be asked for by name.
 
 **The constructor's default is `none`, not `trappiness`** — deliberately the
-opposite of what a bare `PerfectPlayer()` does today (today there is no option,
-and the only behavior is ranking). A perfect player is, by the mathematical
-definition in "What perfect means" above, one that always returns an optimal
-move; ranking among optimal moves is an added feature for exploiting a
-fallible opponent, not part of that definition, so the unadorned construction
-should give the unadorned player. This has no effect on the CLI names: dispatch
-(`cli_common.make_player`) passes `tie_break` explicitly for every built-in
-name, `perfect` included, precisely so that `perfect` keeps ranking regardless
-of what the constructor defaults to — the default only matters to code that
-constructs `PerfectPlayer` directly without naming a policy (tests, tools,
-future callers), which now gets the pure optimal player unless it asks for
-more.
+opposite of what a bare `PerfectPlayer()` did before 1.8 (there was no option,
+and the only behavior was ranking). It is the same argument the bare CLI name
+answers to above: the unadorned construction should give the unadorned player.
+The two agreeing is a convenience, not a coupling — dispatch
+(`cli_common.make_player`) passes `tie_break` explicitly for **every** built-in
+name, so each name stays pinned to its policy whatever the constructor default
+later becomes. The default governs only code that constructs `PerfectPlayer`
+directly without naming a policy (tests, tools, future callers), which gets the
+pure optimal player unless it asks for more.
 
-### The third variant's tie-break, decided 2026-09-18 (still not implemented)
+### The third variant's tie-break, decided 2026-09-18
 
 The third variant — constructor option `mistake-model`, CLI name
 `perfect-mistake-model` — is the non-learned upper bound the RL player has to
@@ -335,7 +361,7 @@ computing first — but **replaces liveness** rather than adding to it:
 double-threat/alignment feature, not whatever the model grows into later. If a
 second feature is ever promoted into it (SPEC-mistake-model.md, "Candidate
 features"), that is a new named variant, not a silent change to this one —
-the same discipline that keeps `perfect` and `perfect-unranked` each one fixed
+the same discipline that keeps `perfect` and `perfect-trappiness` each one fixed
 meaning applies here too.
 
 ## Where the table comes from
@@ -440,12 +466,14 @@ packed values would roughly halve it, at the cost of a custom codec — see
 
 ## Selecting and testing it
 
-The algorithmic player is a **built-in mechanical player named `perfect`**,
-constructed and selected **exactly like `random`**: it is chosen by name wherever a
-side is named — e.g. `play-match --mouse perfect --snake random` (SPEC.md §7) —
-alongside `random` and `human`, and it is built with a fixed per-side display name (the way
-`random` is), which is the name that appears in any results it produces. Like
-`random`, `perfect` is **not** part of the `players.yaml` tournament roster (SPEC.md §4,
+The algorithmic player is a **built-in mechanical player**, constructed and selected
+**exactly like `random`**: it is chosen by name wherever a side is named — e.g.
+`play-match --mouse perfect --snake random` (SPEC.md §7) — alongside `random` and
+`human`, and it is built with a fixed per-side display name (the way `random` is),
+which is the name that appears in any results it produces. It answers to three names,
+one per tie-break policy (`perfect`, `perfect-trappiness`, `perfect-mistake-model` — see
+"Selecting a variant"), each a fixed configuration with its own display names. Like
+`random`, none of them is part of the `players.yaml` tournament roster (SPEC.md §4,
 §6): the roster lists only LLM players. Making the mechanical baselines available as
 calibrated reference opponents inside tournaments (SPEC.md §1) is deferred — and when it
 comes, it is no different for `perfect` than for `random`.
@@ -455,6 +483,13 @@ self-check and canonical-form invariance (all orbit members share a key); that t
 player **never loses a drawn-or-won position** and **never fails to win a won one**
 against an exhaustive or random opponent; and that G-equivalent seeds yield the same
 game value, so the symmetry reduction is sound.
+
+The variants are tested on the one property that separates them from a strength knob:
+**every policy achieves the same value**, asserted over each `TieBreak` in turn, so
+choosing one is a choice about exploiting a fallible opponent and never about how well
+the player plays. Alongside that, each policy is shown to actually be *selected* — the
+unranked pick spreads outside what ranking would have left, and the mistake-model key
+leaves alone a pair that liveness separates.
 
 The two tiers are tested against each other, since the whole design rests on their
 agreeing: table values are re-derived by the live search and must match exactly, and a
