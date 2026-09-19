@@ -1274,3 +1274,22 @@ Out of scope for now:
   **perfect** play the question is settled — every seed is a draw (§10).
 - Any GUI/TUI.
 - Network/remote play.
+
+## To-do
+
+Next up, in no particular order — each already specified in full elsewhere:
+
+- **Anthropic prompt caching.** Configure the per-request `ModelSettings` so an
+  Anthropic match stops paying full price every turn to resend a growing thread
+  (`SPEC-llm-player.md`, "Prompt caching (currently absent for Anthropic)").
+- **Per-player thinking levels.** Let each LLM player override the shared
+  `high` default individually, rather than one global effort level for every
+  model (§4, "Thinking / effort level").
+- **Implement the RL player.** Build the self-play PPO agent already designed
+  (`SPEC-rl-player.md`, "The algorithm and network").
+- **Evaluate the RL player against LLMs.** Check whether it beats real LLMs
+  more often than the unranked `perfect` player does — the project's actual
+  success criterion (`SPEC-rl-player.md`, "Goal"; "Periodic fine-tuning and
+  evaluation against real LLMs").
+- **Tournament vs. frontier and large open-weight hosted models.** Run the
+  hosted-API leg of the benchmark (`RESULTS.md`, §2 "Frontier LLMs").
