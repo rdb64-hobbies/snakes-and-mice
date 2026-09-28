@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -33,11 +34,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.settings import ModelSettings
 
 from snakes_and_mice import (
     Cell,
@@ -55,6 +57,7 @@ from snakes_and_mice import (
 from snakes_and_mice.roster import ConfigError, PlayerSpec, ProviderSpec, Roster
 from snakes_and_mice.players import LLMPlayer
 from snakes_and_mice.players.llm import (
+    ANTHROPIC_CACHE_TTL,
     LLMMove,
     ModelRequestError,
     output_mode_for,
@@ -627,6 +630,14 @@ def _history_processors(agent: Agent[None, LLMMove]) -> list[object]:
     ]
 
 
+def _settings(agent: Agent[None, LLMMove]) -> ModelSettings:
+    """The settings ``agent`` sends with every request. ``Agent.model_settings``
+    also admits a per-run callable, which resolve_agent never uses."""
+    settings = agent.model_settings
+    assert settings is not None and not callable(settings)
+    return settings
+
+
 def test_resolve_builtin_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     monkeypatch.setenv("OPENAI_API_KEY", "k")
@@ -807,6 +818,46 @@ def test_strip_prior_thinking_drops_field_labelled_reasoning() -> None:
     assert [type(p).__name__ for p in out[0].parts] == ["TextPart"]
     assert isinstance(out[1], ModelResponse)
     assert [type(p).__name__ for p in out[1].parts] == []
+
+
+def test_resolve_agent_caches_the_thread_on_anthropic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Anthropic bills the whole resent thread at full price unless the request
+    # asks for caching, so its agent — and only its agent — carries the setting
+    # (§4, "Prompt caching"). The breakpoint reaches the request as a top-level
+    # cache_control, which the server walks forward as the thread grows.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    agent = resolve_agent(
+        PlayerSpec(name="a", provider="anthropic", model="claude-opus-5"), {}
+    )
+    settings: AnthropicModelSettings = cast(AnthropicModelSettings, _settings(agent))
+
+    assert settings.get("anthropic_cache") == ANTHROPIC_CACHE_TTL
+    model = agent.model
+    assert isinstance(model, AnthropicModel)
+    cache_control, _ttl = model._build_automatic_cache_control(settings)
+    assert cache_control == {"type": "ephemeral", "ttl": ANTHROPIC_CACHE_TTL}
+
+
+def test_resolve_agent_keeps_shared_settings_for_every_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The Anthropic branch adds caching; it must not drop what every player runs
+    # at — one effort level (§4, "Thinking / effort level") and one output cap.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    for provider in ("anthropic", "openai"):
+        shared: ModelSettings = _settings(
+            resolve_agent(PlayerSpec(name="p", provider=provider, model="m"), {})
+        )
+        assert shared.get("thinking") == "high"
+        assert shared.get("max_tokens") == 16384
+    # No other provider pays for an Anthropic-only setting it would ignore.
+    openai: ModelSettings = _settings(
+        resolve_agent(PlayerSpec(name="o", provider="openai", model="m"), {})
+    )
+    assert "anthropic_cache" not in openai
 
 
 def test_resolve_agent_does_not_prune_by_default(

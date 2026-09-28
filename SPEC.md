@@ -1279,9 +1279,6 @@ Out of scope for now:
 
 Next up, in no particular order — each already specified in full elsewhere:
 
-- **Anthropic prompt caching.** Configure the per-request `ModelSettings` so an
-  Anthropic match stops paying full price every turn to resend a growing thread
-  (`SPEC-llm-player.md`, "Prompt caching (currently absent for Anthropic)").
 - **Per-player thinking levels.** Let each LLM player override the shared
   `high` default individually, rather than one global effort level for every
   model (§4, "Thinking / effort level").

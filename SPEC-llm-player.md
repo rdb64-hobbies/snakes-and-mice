@@ -195,38 +195,57 @@ full reasoning of every turn for debugging, and the _current_ turn's thinking is
 touched (only prior turns are pruned, and only in what is sent). It never changes which
 moves are legal or how faults are scored.
 
-## Prompt caching (currently absent for Anthropic)
+## Prompt caching
 
 Because the thread is resent **whole** every turn (see "The message thread") and grows
 every turn, whether a provider discounts the repeated prefix instead of rebilling it in
-full has an outsized effect on cost — and today that is inconsistent by construction,
-not by design. OpenAI's `gpt-5.6` family caches automatically, gated by the model
-profile (`openai_supports_prompt_cache_breakpoints`); Anthropic's caching is **opt-in
-per request** (`ModelSettings`'s `anthropic_cache` / `anthropic_cache_messages` /
-`anthropic_cache_instructions` / `anthropic_cache_tool_definitions`), and the player
-never sets any of them — `ModelSettings(thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS)`
-is the whole of it (see "Model selection" / the settings built in the player). So every
-Anthropic request pays full base-input price for the entire resent history, every turn,
-while a caching-eligible OpenAI request pays roughly a tenth of that for the part it has
-already seen.
+full has an outsized effect on cost. OpenAI's `gpt-5.6` family caches automatically,
+gated by the model profile (`openai_supports_prompt_cache_breakpoints`); Anthropic's
+caching is **opt-in per request**, so the player asks for it: the settings it builds for
+an Anthropic model carry `anthropic_cache`, and every other provider gets the same
+settings without it.
 
-Measured on matched four-game runs against `perfect` (2026-09-08): `opus-5`'s match
-logged `cache_read_tokens: 0` / `cache_write_tokens: 0` throughout, against
-`gpt-5-6-sol`'s ~86% cache-hit rate (77,246 of 90,191 input tokens). List prices are
-close (`opus-5` $5/$25 per MTok in/out vs `gpt-5-6-sol`'s $4/$20) and cannot explain a
-large cost gap on their own; the caching gap can, and it **compounds**, because the
-thread both grows every turn and gets fully rebilled every turn on the uncached side —
-cost-per-match grows roughly with the square of thread length without caching, roughly
-linearly with it. That is invisible in a four-game sample (where `opus-5`'s single most
-expensive turn's input already reached 54,706 tokens, ~$0.27 uncached) and severe over a
-long tournament match: a same-day 100-game `gpt-5-6-sol` run cost about $12 in total, a
-75-game `opus-5` run about $150 — a ~17x per-game gap that the reasoning-verbosity
-difference between the two (see "Thinking / effort level," roughly 3-5x) does not by
-itself account for.
+`anthropic_cache` is the automatic form — a top-level `cache_control` that puts the
+breakpoint at the end of the request and lets the server walk it forward as the thread
+grows, which is exactly the shape here: an append-only thread whose prefix is identical
+to the last turn's whole request. The explicit breakpoints
+(`anthropic_cache_instructions`, `anthropic_cache_tool_definitions`) have nothing to
+bite on — this player sends no system prompt (the rules preamble is the first *user*
+message) and no tool definitions (Anthropic's output mode is native JSON schema, see
+"Structured output"), so the message breakpoint is the whole of it.
 
-This is not a fact about Anthropic being pricier; it is a fact about which provider this
-project happens to leave its default caching off for. **Deliberately not fixed now** —
-see "Deferred for now."
+The retention is `ANTHROPIC_CACHE_TTL`, `5m`. A read refreshes the entry, so the cache
+survives any gap shorter than that — the player's own turn plus the opponent's. Against
+`perfect` that gap is milliseconds; two reasoning models at `high` effort can approach
+it, and a miss rebills the entire prefix, where `1h` retention would only double the
+write price of each turn's small delta. That is the one knob worth turning if a match's
+logged `cache_read_tokens` come back at zero.
+
+Measured after the fix, on a two-game `opus-5` vs `perfect` run (2026-09-28): 9 turns,
+81.2% of 91,941 input tokens served from cache, rising to ~90% by the last turns as the
+fixed cost of the un-cacheable opening amortizes — against `gpt-5-6-sol`'s 85.6%
+baseline below. Input cost fell 68% ($0.46 → $0.15); the run's logged total, $0.56, is
+now dominated by output tokens ($0.42), which caching does not touch. Turn 3 dips to
+29% because the turn before it emitted 5,316 output tokens, all of which had to be
+written fresh — the hit rate tracks how much each turn *adds* to the thread, so it is
+lowest exactly when the model reasons longest.
+
+### What it was costing (measured before the fix)
+
+Matched four-game runs against `perfect` (2026-09-08): `opus-5`'s match logged
+`cache_read_tokens: 0` / `cache_write_tokens: 0` throughout, against `gpt-5-6-sol`'s
+~86% cache-hit rate (77,246 of 90,191 input tokens). List prices are close (`opus-5`
+$5/$25 per MTok in/out vs `gpt-5-6-sol`'s $4/$20) and cannot explain a large cost gap on
+their own; the caching gap can, and it **compounds**, because the thread both grows every
+turn and gets fully rebilled every turn on the uncached side — cost-per-match grows
+roughly with the square of thread length without caching, roughly linearly with it. That
+was invisible in a four-game sample (where `opus-5`'s single most expensive turn's input
+already reached 54,706 tokens, ~$0.27 uncached) and severe over a long tournament match:
+a same-day 100-game `gpt-5-6-sol` run cost about $12 in total, a 75-game `opus-5` run
+about $150 — a ~17x per-game gap that the reasoning-verbosity difference between the two
+(see "Thinking / effort level," roughly 3-5x) does not by itself account for. The `$150`
+figure is the one to compare a post-fix run against; the `--log-llm` dump carries
+`cache_read_tokens` / `cache_write_tokens` per turn, which is where to read the hit rate.
 
 ## No retries
 
@@ -511,13 +530,12 @@ managing a thread that
 still outgrows the model's context window over a long match — `--prune-thinking` can
 slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it.
 
-**Enabling Anthropic prompt caching is in this same deferred bucket**, and the one
-with a measured dollar cost attached (see "Prompt caching (currently absent for
-Anthropic)"): a long Anthropic match is currently paying full price, every turn, to
-resend a thread that grows every turn, for want of a per-provider setting override
-this document has already deferred once above. It needs the same general mechanism as
-the effort-level override, not a bespoke fix — this is a concrete case that mechanism
-should cover when it is built, not a separate piece of work.
+Anthropic prompt caching **was** in this bucket and is now done (see "Prompt
+caching"). It turned out not to need the general override mechanism above: caching is
+not a per-player choice to be configured but a fixed consequence of which provider a
+player runs on, so the settings the player builds simply branch on the model type. The
+override stays deferred for what actually wants it — asking a model family for its own
+top effort level rather than the unified scale's.
 
 A further, more speculative idea: a **vision-based LLM player** that perceives the
 board as a rendered image instead of reconstructing it from move history. The engine

@@ -43,7 +43,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.models.openrouter import OpenRouterModel
@@ -95,6 +95,13 @@ level"). Not all providers accept it; see :func:`_warn_if_thinking_unsupported`.
 MAX_OUTPUT_TOKENS: int = 16384
 """Cap on tokens per response, well above Pydantic AI's 4096 default (§4,
 "Structured output")."""
+
+ANTHROPIC_CACHE_TTL: Literal["5m", "1h"] = "5m"
+"""How long Anthropic holds the cached thread prefix between turns (§4, "Prompt
+caching"). A read refreshes the entry, so 5m survives any gap shorter than that
+— own turn plus opponent turn. Raise to "1h" if a slow opponent (another
+reasoning model at high effort) makes turns miss: a miss rebills the whole
+prefix, where "1h" only doubles the write price of each turn's small delta."""
 
 # Built-in providers needing native JSON-schema output; a custom endpoint says so
 # itself, with output_mode: native. See uses_native_output.
@@ -279,6 +286,27 @@ def _output_spec(mode: OutputMode) -> OutputSpec[LLMMove]:
     return LLMMove
 
 
+def _model_settings(model: Model, thinking: ThinkingLevel) -> ModelSettings:
+    """The per-request settings every turn is sent with.
+
+    Anthropic is the one provider whose prompt caching is opt-in per request, so
+    an Anthropic model additionally gets ``anthropic_cache``: the server keeps a
+    cache breakpoint at the end of the thread and moves it forward as the thread
+    grows, so each turn reads back the prefix it has already sent instead of
+    rebilling it at full base-input price (§4, "Prompt caching"). Nothing else
+    here is provider-specific — no system prompt or tool definitions are sent
+    (the rules preamble is the first *user* message, and Anthropic's output mode
+    is native JSON schema), so the message breakpoint is the whole of it.
+    """
+    if isinstance(model, AnthropicModel):
+        return AnthropicModelSettings(
+            thinking=thinking,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            anthropic_cache=ANTHROPIC_CACHE_TTL,
+        )
+    return ModelSettings(thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS)
+
+
 def resolve_agent(
     spec: PlayerSpec,
     providers: dict[str, ProviderSpec],
@@ -289,15 +317,14 @@ def resolve_agent(
     """Build the Pydantic AI :class:`Agent` an :class:`LLMPlayer` will drive.
 
     The model is wrapped in an agent whose output mode fits the provider — see
-    :func:`output_mode_for` (§4, "Structured output"). ``retries=0`` enforces
-    §4's "no re-prompting within a game", and ``prune_thinking`` attaches the
-    :func:`strip_prior_thinking` history processor.
+    :func:`output_mode_for` (§4, "Structured output") and whose settings fit it
+    too — see :func:`_model_settings` (§4, "Prompt caching"). ``retries=0``
+    enforces §4's "no re-prompting within a game", and ``prune_thinking``
+    attaches the :func:`strip_prior_thinking` history processor.
     """
     model: Model = resolve_model(spec, providers)
     _warn_if_thinking_unsupported(spec, model)
-    settings: ModelSettings = ModelSettings(
-        thinking=thinking, max_tokens=MAX_OUTPUT_TOKENS
-    )
+    settings: ModelSettings = _model_settings(model, thinking)
     capabilities: list[ProcessHistory[None]] = (
         [ProcessHistory(strip_prior_thinking)] if prune_thinking else []
     )
