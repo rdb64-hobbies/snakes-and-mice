@@ -54,7 +54,14 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.settings import ModelSettings
 
-from ..roster import ConfigError, OutputMode, PlayerSpec, ProviderSpec, Roster
+from ..roster import (
+    ConfigError,
+    OutputMode,
+    PlayerSpec,
+    ProviderSpec,
+    Roster,
+    ThinkingLevel,
+)
 from ..core import Cell, Move, MoveChoice, Side, TurnOutcome
 from ..faults import (
     IllegalMove,
@@ -85,12 +92,10 @@ _BUILTIN_KEY_ENV: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
 }
 
-ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
-"""Pydantic AI's unified reasoning-effort levels, coarsest to finest."""
-
 DEFAULT_THINKING: ThinkingLevel = "high"
-"""The one reasoning effort every LLM player runs at (§4, "Thinking / effort
-level"). Not all providers accept it; see :func:`_warn_if_thinking_unsupported`."""
+"""The reasoning effort an LLM player runs at unless its roster entry names one
+of its own (§4, "Thinking / effort level"); see :func:`thinking_for`. Not all
+providers accept a level at all; see :func:`_warn_if_thinking_unsupported`."""
 
 MAX_OUTPUT_TOKENS: int = 16384
 """Cap on tokens per response, well above Pydantic AI's 4096 default (§4,
@@ -249,16 +254,30 @@ def strip_prior_thinking(messages: list[ModelMessage]) -> list[ModelMessage]:
     return stripped
 
 
-def _warn_if_thinking_unsupported(spec: PlayerSpec, model: Model) -> None:
+def thinking_for(
+    spec: PlayerSpec, default: ThinkingLevel = DEFAULT_THINKING
+) -> ThinkingLevel:
+    """The reasoning effort this player runs at (§4, "Thinking / effort level").
+
+    A roster entry naming its own ``thinking`` wins; anything else runs at
+    ``default``. Two entries may name the same model at different levels — they
+    are separate players, since standings identify a player by roster name.
+    """
+    return spec.thinking if spec.thinking is not None else default
+
+
+def _warn_if_thinking_unsupported(
+    spec: PlayerSpec, model: Model, thinking: ThinkingLevel
+) -> None:
     """Note on stderr that this model's profile will not accept a thinking level,
-    so :data:`DEFAULT_THINKING` is silently dropped and the server's own default
-    applies instead. Never fails the run — §4, "Thinking / effort level".
+    so ``thinking`` is silently dropped and the server's own default applies
+    instead. Never fails the run — §4, "Thinking / effort level".
     """
     if not model.profile.get("supports_thinking", False):
         print(
             f"Note: player {spec.name!r} — {spec.provider} does not accept a "
-            f"thinking level for model {spec.model!r}; its effort is whatever the "
-            f"server defaults to.",
+            f"thinking level for model {spec.model!r}; it will not run at "
+            f"{thinking!r}, but at whatever effort the server defaults to.",
             file=sys.stderr,
         )
 
@@ -321,10 +340,14 @@ def resolve_agent(
     too — see :func:`_model_settings` (§4, "Prompt caching"). ``retries=0``
     enforces §4's "no re-prompting within a game", and ``prune_thinking``
     attaches the :func:`strip_prior_thinking` history processor.
+
+    ``thinking`` is the fallback effort level, used only for a roster entry that
+    names none of its own (:func:`thinking_for`).
     """
     model: Model = resolve_model(spec, providers)
-    _warn_if_thinking_unsupported(spec, model)
-    settings: ModelSettings = _model_settings(model, thinking)
+    effort: ThinkingLevel = thinking_for(spec, thinking)
+    _warn_if_thinking_unsupported(spec, model, effort)
+    settings: ModelSettings = _model_settings(model, effort)
     capabilities: list[ProcessHistory[None]] = (
         [ProcessHistory(strip_prior_thinking)] if prune_thinking else []
     )
@@ -375,9 +398,11 @@ class LLMPlayer(Player):
 
         The roster comes from :mod:`~snakes_and_mice.roster` as parsed specs; this
         is where one is resolved to a live model and agent (:func:`resolve_agent`),
-        so the roster loader never touches Pydantic AI. Raises :class:`ConfigError`
-        if no such player is in the roster, if its provider is unknown, or if the
-        provider's API key is not in the environment.
+        so the roster loader never touches Pydantic AI. ``thinking`` is the
+        fallback effort level, which the roster entry's own overrides
+        (:func:`thinking_for`). Raises :class:`ConfigError` if no such player is in
+        the roster, if its provider is unknown, or if the provider's API key is not
+        in the environment.
         """
         spec: PlayerSpec | None = roster.players.get(name)
         if spec is None:

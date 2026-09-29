@@ -300,7 +300,8 @@ Three sources of configuration, parsed **outside** the player (SPEC.md §8, Arch
 
 - **`players.yaml`** — the roster of available players. Each entry is a free-form
   **name** (its identity in matches and standings, independent of the model — in
-  common use it will just echo the model), a provider, and a model name:
+  common use it will just echo the model), a provider, a model name, and
+  optionally a `thinking` level (see "Thinking / effort level"):
 
   ```yaml
   players:
@@ -310,6 +311,7 @@ Three sources of configuration, parsed **outside** the player (SPEC.md §8, Arch
     - name: gpt5
       provider: openai
       model: gpt-5
+      thinking: xhigh # this entry's own level; omit to run at the default
     - name: gemini-pro
       provider: gemini
       model: gemini-3-pro
@@ -375,12 +377,25 @@ xhigh`; it translates each to the provider's native mechanism (Anthropic's think
 budget, OpenAI's reasoning effort, Gemini's thinking budget, …) and maps an
 unsupported level to the nearest available one.
 
-For now every LLM player uses the **same** level — a single global default, set to
-**`high`** — so each model reasons strongly and comparisons are made on an even
-footing, without the steep cost of the top (`xhigh`) tier. "Consistent" here means
-_each model at the same effort level_, not a byte-identical configuration across
-providers. Per-player effort levels and provider-specific setting overrides are
-deliberately deferred.
+The roster-wide default is **`high`**: every player runs there unless its own entry
+says otherwise, so by default each model reasons strongly and comparisons are made
+on an even footing, without the steep cost of the top (`xhigh`) tier. "Consistent"
+here means _each model at the same effort level_, not a byte-identical
+configuration across providers.
+
+**A roster entry may name its own level**, as `thinking: minimal | low | medium |
+high | xhigh` (see "Model selection"); an entry that names none runs at the
+default. The level is part of a player's configuration, not of its identity: two
+entries may name the same model at different levels, and because standings
+identify a player by its roster **name**, they meet as two separate players and
+score separately. Nothing checks that the names say so — `gpt5` and `gpt5-medium`
+is a convention, not a rule.
+
+Overriding is for making a comparison fairer, not for handicapping one side of it.
+The next paragraph is why the shared default cannot do that job on its own; a
+level chosen for any other reason quietly turns a model-vs-model result into a
+model-at-a-level-vs-model-at-a-level one, which the results file records only as
+two names.
 
 **A shared label is not a shared ceiling.** Effort scales are not standardized in
 size across model families, so the same unified level can land at a different
@@ -394,10 +409,13 @@ scale mismatch, not by either model being asked to think harder than the other i
 relative terms. A newer family can grow finer-grained levels above where an older
 family's ceiling used to sit, silently turning "the same effort level" into a
 materially different one; nothing here detects or warns about it, and it is not
-specific to this one model family. Fixing it needs a per-player override that can
-name a **provider-native** effort value (e.g. OpenAI's
-`openai_reasoning_effort='max'`), not only the unified level — the general
-mechanism deferred above, not a one-off for `gpt-5.6`.
+specific to this one model family. The per-player override above is what corrects
+it — `gpt-5.6-sol` can be asked for `xhigh` while `gpt-5`, whose ceiling is `high`,
+stays there — and correcting it is the reason the override exists. What the
+override still cannot reach is a **provider-native** effort value outside the
+unified scale (e.g. OpenAI's `openai_reasoning_effort='max'`, above Pydantic AI's
+top `xhigh`); that needs the general per-provider settings mechanism, which stays
+deferred.
 
 **The level is best-effort, and for many models it does not arrive.** Pydantic AI
 drops the unified setting **silently** for any model whose profile reports no support
@@ -412,8 +430,9 @@ the model — so a level above the roster's is not the safe direction to err in.
 The project does **not** fail or fall back in that case — the fix belongs on the
 server (e.g. vLLM's `--default-chat-template-kwargs`), and a hard failure would make
 perfectly usable models unusable. It **does** print one note per affected player at
-construction, so "running at `high`" and "running at the server's default" are
-distinguishable without probing the endpoint.
+construction, naming the level that was dropped, so "running at the level this
+entry asked for" and "running at the server's default" are distinguishable without
+probing the endpoint.
 
 ## Message logging (debugging)
 
@@ -522,10 +541,11 @@ the question rather than answering it.
 ## Deferred for now
 
 To keep the first LLM player simple, and beyond the game-playing core above:
-usage / cost / latency tracking; per-player or per-provider setting overrides (see
-"Thinking / effort level", "A shared label is not a shared ceiling" — this is what
-blocks asking a family like `gpt-5.6` for its actual top effort level rather than
-the unified scale's); persistence of the message thread across processes; and fully
+usage / cost / latency tracking; **provider-native** setting overrides, the general
+mechanism of which the per-player `thinking` level is the one case built (see
+"Thinking / effort level", "A shared label is not a shared ceiling" — what remains
+blocked is naming a value off the unified scale, such as a family's own top effort
+level above `xhigh`); persistence of the message thread across processes; and fully
 managing a thread that
 still outgrows the model's context window over a long match — `--prune-thinking` can
 slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it.
@@ -533,9 +553,11 @@ slow that growth (see "Pruning re-sent reasoning") but does not by itself cap it
 Anthropic prompt caching **was** in this bucket and is now done (see "Prompt
 caching"). It turned out not to need the general override mechanism above: caching is
 not a per-player choice to be configured but a fixed consequence of which provider a
-player runs on, so the settings the player builds simply branch on the model type. The
-override stays deferred for what actually wants it — asking a model family for its own
-top effort level rather than the unified scale's.
+player runs on, so the settings the player builds simply branch on the model type.
+The per-player `thinking` level has since landed too, as a single named field on the
+roster entry rather than the free-form settings bag the general mechanism would be.
+The override stays deferred for what actually wants it — asking a model family for
+its own top effort level rather than the unified scale's.
 
 A further, more speculative idea: a **vision-based LLM player** that perceives the
 board as a rendered image instead of reconstructing it from move history. The engine

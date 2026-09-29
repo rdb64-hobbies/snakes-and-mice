@@ -129,3 +129,38 @@ def test_unknown_output_mode_is_an_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="output_mode"):
         load_roster(players_path, providers_path)
+
+
+def test_player_thinking_level_is_optional_and_parsed(tmp_path: Path) -> None:
+    # thinking is optional, so every existing players.yaml keeps the shared
+    # default; a level is opt-in per player (§4, "Thinking / effort level").
+    players_path: Path = tmp_path / "players.yaml"
+    players_path.write_text(
+        "players:\n"
+        "  - name: plain\n"
+        "    provider: openai\n"
+        "    model: m\n"
+        "  - name: hard\n"
+        "    provider: openai\n"
+        "    model: m\n"
+        "    thinking: xhigh\n"
+    )
+
+    roster: Roster = load_roster(players_path, tmp_path / "providers.yaml")
+
+    assert roster.players["plain"].thinking is None
+    assert roster.players["hard"].thinking == "xhigh"
+
+
+def test_unknown_thinking_level_is_an_error(tmp_path: Path) -> None:
+    players_path: Path = tmp_path / "players.yaml"
+    players_path.write_text(
+        "players:\n"
+        "  - name: p\n"
+        "    provider: openai\n"
+        "    model: m\n"
+        "    thinking: maximum\n"
+    )
+
+    with pytest.raises(ConfigError, match="thinking"):
+        load_roster(players_path, tmp_path / "providers.yaml")

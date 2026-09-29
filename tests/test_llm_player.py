@@ -58,12 +58,14 @@ from snakes_and_mice.roster import ConfigError, PlayerSpec, ProviderSpec, Roster
 from snakes_and_mice.players import LLMPlayer
 from snakes_and_mice.players.llm import (
     ANTHROPIC_CACHE_TTL,
+    DEFAULT_THINKING,
     LLMMove,
     ModelRequestError,
     output_mode_for,
     resolve_agent,
     resolve_model,
     strip_prior_thinking,
+    thinking_for,
 )
 from snakes_and_mice.players.prompts import RULES_PREAMBLE
 
@@ -860,6 +862,76 @@ def test_resolve_agent_keeps_shared_settings_for_every_provider(
     assert "anthropic_cache" not in openai
 
 
+def test_thinking_for_prefers_the_roster_entrys_level() -> None:
+    # The roster entry is the override; an entry that names nothing runs at the
+    # shared default (§4, "Thinking / effort level").
+    plain = PlayerSpec(name="p", provider="openai", model="m")
+    named = PlayerSpec(name="p", provider="openai", model="m", thinking="minimal")
+
+    assert thinking_for(plain) == DEFAULT_THINKING
+    assert thinking_for(named) == "minimal"
+    # The fallback argument is only ever a fallback: it never displaces an entry's
+    # own level.
+    assert thinking_for(plain, "low") == "low"
+    assert thinking_for(named, "low") == "minimal"
+
+
+def test_resolve_agent_uses_the_roster_entrys_thinking_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Per-player levels exist because a shared label is not a shared ceiling: one
+    # family's "high" sits two rungs below its top while another's is its top, so
+    # an even footing sometimes means asking two models for different levels.
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    spec = PlayerSpec(name="p", provider="openai", model="m", thinking="xhigh")
+
+    settings: ModelSettings = _settings(resolve_agent(spec, {}))
+
+    assert settings.get("thinking") == "xhigh"
+    # Everything else a player runs with is untouched by the override.
+    assert settings.get("max_tokens") == 16384
+
+
+def test_resolve_agent_thinking_level_survives_the_anthropic_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # _model_settings branches on the model type to add caching; the override has
+    # to reach both branches, not just the plain one (§4, "Prompt caching").
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+    spec = PlayerSpec(name="p", provider="anthropic", model="m", thinking="low")
+
+    settings: ModelSettings = _settings(resolve_agent(spec, {}))
+
+    assert settings.get("thinking") == "low"
+    assert settings.get("anthropic_cache") == ANTHROPIC_CACHE_TTL
+
+
+def test_from_roster_gives_each_player_its_own_thinking_level(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Two entries naming the same model at different levels are two players —
+    # standings identify a player by roster name — so the levels must not be
+    # shared through anything the two agents have in common.
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    roster: Roster = Roster(
+        players={
+            "hard": PlayerSpec(name="hard", provider="openai", model="m",
+                               thinking="xhigh"),
+            "easy": PlayerSpec(name="easy", provider="openai", model="m",
+                               thinking="minimal"),
+            "plain": PlayerSpec(name="plain", provider="openai", model="m"),
+        },
+        providers={},
+    )
+
+    levels: dict[str, object] = {
+        name: _settings(LLMPlayer.from_roster(name, roster)._agent).get("thinking")
+        for name in ("hard", "easy", "plain")
+    }
+
+    assert levels == {"hard": "xhigh", "easy": "minimal", "plain": DEFAULT_THINKING}
+
+
 def test_resolve_agent_does_not_prune_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -939,6 +1011,27 @@ def test_warns_when_the_endpoint_ignores_the_thinking_level(
     err: str = capsys.readouterr().err
     assert "qwen-local" in err
     assert "thinking level" in err
+    # It names the level that was dropped, so a roster entry's own override is
+    # not silently mistaken for the default.
+    assert DEFAULT_THINKING in err
+
+
+def test_the_ignored_level_note_names_the_players_own_level(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A local endpoint is exactly where an override is most tempting and least
+    # likely to arrive, so the note has to report what this player asked for.
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    providers: dict[str, ProviderSpec] = {
+        "local": ProviderSpec(name="local", base_url="http://localhost:8000/v1")
+    }
+    resolve_agent(
+        PlayerSpec(name="qwen-local", provider="local", model="qwen/qwen3.8",
+                   thinking="medium"),
+        providers,
+    )
+
+    assert "medium" in capsys.readouterr().err
 
 
 def test_no_warning_when_the_provider_takes_the_thinking_level(

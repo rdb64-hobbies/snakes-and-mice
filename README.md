@@ -88,9 +88,11 @@ cp providers.example.yaml providers.yaml   # only for custom endpoints (optional
 cp .env.example           .env             # your API keys
 ```
 
-`players.yaml` names each player and maps it to a provider and model; `.env`
-holds the API keys (never commit it); `providers.yaml` is only needed for custom
-OpenAI-compatible endpoints like a local ollama. All three are git-ignored.
+`players.yaml` names each player and maps it to a provider and model — and,
+optionally, to its own reasoning effort, since `high` means a different amount of
+thinking on each model family; `.env` holds the API keys (never commit it);
+`providers.yaml` is only needed for custom OpenAI-compatible endpoints like a
+local ollama. All three are git-ignored.
 
 Then a roster name can play either side:
 

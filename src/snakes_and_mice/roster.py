@@ -36,12 +36,23 @@ class ConfigError(SnakesAndMiceError):
     """A roster or provider configuration could not be loaded or resolved."""
 
 
+ThinkingLevel = Literal["minimal", "low", "medium", "high", "xhigh"]
+"""Pydantic AI's unified reasoning-effort levels, coarsest to finest (§4,
+"Thinking / effort level")."""
+
+
 class PlayerSpec(BaseModel):
-    """One roster entry: a free-form name, a provider, and a model name."""
+    """One roster entry: a free-form name, a provider, a model name, and
+    optionally the reasoning effort this player runs at.
+
+    ``thinking`` unset means the roster-wide default
+    (:data:`~snakes_and_mice.players.llm.DEFAULT_THINKING`) applies.
+    """
 
     name: str
     provider: str
     model: str
+    thinking: ThinkingLevel | None = None
 
 
 OutputMode = Literal["tool", "native", "prompted"]

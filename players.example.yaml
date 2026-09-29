@@ -5,6 +5,12 @@
 #   provider: anthropic | openai | gemini | openrouter | a custom provider name
 #             defined in providers.yaml
 #   model:    the provider's model name
+#   thinking: OPTIONAL reasoning effort — minimal | low | medium | high | xhigh.
+#             Omit it to run at the shared default (high). Levels are not
+#             comparable across model families, so the same word can mean a
+#             different relative effort on each (SPEC-llm-player.md, "A shared
+#             label is not a shared ceiling"), and some endpoints ignore it
+#             entirely — the run prints a note when that happens.
 #
 # API keys are NOT set here — they live in .env (see .env.example).
 players:
@@ -15,6 +21,14 @@ players:
   - name: gpt5
     provider: openai
     model: gpt-5.6-terra
+    thinking: xhigh # this family's scale runs above where others top out
+
+  # The same model at a second effort level is simply a second entry: standings
+  # identify a player by name, so the two meet as separate players.
+  - name: gpt5-medium
+    provider: openai
+    model: gpt-5.6-terra
+    thinking: medium
 
   - name: gemini
     provider: gemini

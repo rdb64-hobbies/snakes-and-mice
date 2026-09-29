@@ -1261,7 +1261,13 @@ progress toward that, not incidental churn.
     1.8 `perfect` was the trap-ranking player, so a Percy/Perseus row recorded before
     1.8 is a stronger opponent than one recorded after. Deliberate, and the only time
     it happens — the point of naming the variants is that it cannot happen again.
-    _(current)_
+  - **1.9** — **per-player thinking levels** (§4, "Thinking / effort level"): a
+    roster entry may now name its own `thinking` level instead of every player
+    running at the shared `high`. This is what lets an even footing survive the
+    fact that effort scales differ in size across model families — `high` is one
+    family's ceiling and two rungs below another's — so the same label was already
+    buying materially different amounts of reasoning. The default is unchanged, so
+    a roster that names no levels behaves exactly as before. _(current)_
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
@@ -1279,9 +1285,6 @@ Out of scope for now:
 
 Next up, in no particular order — each already specified in full elsewhere:
 
-- **Per-player thinking levels.** Let each LLM player override the shared
-  `high` default individually, rather than one global effort level for every
-  model (§4, "Thinking / effort level").
 - **Implement the RL player.** Build the self-play PPO agent already designed
   (`SPEC-rl-player.md`, "The algorithm and network").
 - **Evaluate the RL player against LLMs.** Check whether it beats real LLMs
