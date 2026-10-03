@@ -42,6 +42,13 @@ regression runs alone for ``--pretrain-epochs`` before any game is played.
 
 Evaluation is greedy — it plays the `RLPlayer` the checkpoint will produce, not
 the sampling learner — so the number reported is the number a match would see.
+
+**It runs single-threaded on purpose** (:data:`TORCH_THREADS`), and does not want
+a GPU. Half an iteration is thousands of batch-1 forward passes, where MPS is
+5.5x *slower* than the CPU (101 us against 18 us) because launch overhead dwarfs
+a 50x256 matmul; the other half is batch-256 updates that leave any real GPU
+idling well above 99%. Making this hardware-shaped would mean vectorizing
+`collect` so games step in lockstep — a change to the rollout, not a device flag.
 """
 
 from __future__ import annotations
@@ -79,6 +86,22 @@ ALL_SEEDS: tuple[Cell, ...] = tuple(Cell(r, c) for r in range(5) for c in range(
 
 SELF_PLAY: str = "self"
 """The pool entry meaning "the current policy, recorded on both seats"."""
+
+TORCH_THREADS: int = 1
+"""How many CPU threads torch may use. One, measured, is fastest.
+
+This network is far too small for intra-op parallelism to pay for its own
+synchronization: a forward+backward+Adam step at the PPO minibatch size of 256
+costs 360 us on one thread against 977 us on twelve. The rollout and inference
+shapes (batch 1 and the policy's batched pass over a position's children) are
+flat across thread counts, so only the update is affected — but it is ~45% of an
+iteration, and one thread takes a full iteration from 384 ms to 319 ms.
+
+Set here and not in the package: thread count is a process-wide global, and a
+library must not reconfigure its host (the same line `cli_common` draws around
+HTTP log levels). ``--threads`` overrides it, since the measurement is for this
+net shape on this machine and a much wider ``--hidden`` could invert it.
+"""
 
 FREE_POOL: dict[str, float] = {SELF_PLAY: 0.60, "random": 0.40}
 """The opponents that cost nothing: the current policy, and `random`.
@@ -488,6 +511,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--time-budget", type=float, default=0.0, metavar="SECONDS",
                         help="stop after this much wall clock (0: no limit)")
+    parser.add_argument(
+        "--threads", type=int, default=TORCH_THREADS, metavar="N",
+        help=f"CPU threads for torch (default: {TORCH_THREADS}); this network is "
+             f"small enough that more threads cost more than they save",
+    )
     args: argparse.Namespace = parser.parse_args(argv)
 
     settings = Settings(
@@ -495,6 +523,8 @@ def main(argv: list[str] | None = None) -> None:
         games_per_iteration=args.games_per_iteration,
         pretrain_epochs=args.pretrain_epochs,
     )
+    if args.threads > 0:
+        torch.set_num_threads(args.threads)
     rng = random.Random(args.rng_seed)
     torch.manual_seed(args.rng_seed)
 
