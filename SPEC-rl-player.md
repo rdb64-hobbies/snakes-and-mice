@@ -374,7 +374,19 @@ that was 4 losses against 1 over 50 games each, far too few to carry the claim. 
 second 100-game run split 2 and 2. **There is no measured side effect**; the
 earlier reading was noise. None of the 4–5% is surprising for a policy trained
 without a single `perfect` game in the pool, and that pool is the obvious thing
-for a longer run to attack.
+to attack — but with a *differently mixed* run, not a longer one.
+
+**Longer would not have helped: this run plateaued after five minutes.** It
+reached 99.0% against `random` at iteration 1000, 306 s in, and the remaining 40
+minutes of the budget produced 96.5, 98.5, 96.0, 96.5, 98.0, 97.5 and 96.5 —
+noise around one level, with the first evaluation the best of the eight. Roughly
+89% of the compute bought nothing measurable. That is the strongest available
+argument that the binding constraint is *what* the agent plays against rather
+than how many games it gets: those 40 idle minutes would have afforded ~430
+`perfect` games at 5.5 s each, which is a curriculum this document has not yet
+tried and which needs no new code, only a non-zero `--perfect-share`. It is also
+why optimizing rollout throughput is the wrong lever, and the trainer's module
+docstring records the measurements retiring that idea.
 
 **The number that matters is not here.** Every row above is a mechanical opponent.
 Whether the agent beats an LLM more often than `perfect` does — the Goal, the only

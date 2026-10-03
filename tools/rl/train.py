@@ -47,8 +47,26 @@ the sampling learner — so the number reported is the number a match would see.
 a GPU. Half an iteration is thousands of batch-1 forward passes, where MPS is
 5.5x *slower* than the CPU (101 us against 18 us) because launch overhead dwarfs
 a 50x256 matmul; the other half is batch-256 updates that leave any real GPU
-idling well above 99%. Making this hardware-shaped would mean vectorizing
-`collect` so games step in lockstep — a change to the rollout, not a device flag.
+idling well above 99%.
+
+Vectorizing `collect` so games step in lockstep does **not** change that answer,
+and an earlier version of this docstring was wrong to name it as the way to make
+this GPU-shaped. Batching the rollouts turns ~4,100 batch-1 calls into ~12
+batch-256 ones, and at that shape the CPU is still ahead on one thread (73 us
+against MPS's 134 us); the crossover is somewhere past batch 16k, which would
+need 16,000 games in flight per ply. As a pure CPU optimization it is also capped
+low: only 46% of `collect` is torch at all (186 ms against 100 ms with the
+network stubbed out), so perfect batching would reach ~235 ms an iteration from
+319 ms, for a rewrite of the rollout loop that would *add* bookkeeping to the
+Python floor it cannot touch.
+
+None of which matters, because **throughput is not this trainer's constraint**.
+The shipped checkpoint reached 99.0% against `random` at iteration 1000, 306
+seconds in; the remaining 40 minutes of its 45-minute budget produced 96.5, 98.5,
+96.0, 96.5, 98.0, 97.5 and 96.5 — noise around the same level, with the first
+evaluation the best of them. Compute spent here is already not buying policy
+quality. What the evidence points at instead is the opponent pool
+(SPEC-rl-player.md, "What the first trained agent actually does").
 """
 
 from __future__ import annotations
