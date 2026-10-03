@@ -32,7 +32,7 @@ from .core import Cell
 from .roster import ConfigError, Roster, load_environment, load_roster
 from .core import Side
 from .match import play_match
-from .players import ModelRequestError, Player
+from .players import CheckpointError, ModelRequestError, Player
 from .result import MatchResult
 from .serialize import append_match_result
 
@@ -60,12 +60,12 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--mouse", default="random", metavar="WHO",
-        help="who plays Mouse: random, human, perfect, perfect-trappiness, "
+        help="who plays Mouse: random, human, rl, perfect, perfect-trappiness, "
              "perfect-mistake-model, or an LLM roster name (default: random)",
     )
     parser.add_argument(
         "--snake", default="random", metavar="WHO",
-        help="who plays Snake: random, human, perfect, perfect-trappiness, "
+        help="who plays Snake: random, human, rl, perfect, perfect-trappiness, "
              "perfect-mistake-model, or an LLM roster name (default: random)",
     )
     parser.add_argument(
@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
             args.snake, Side.SNAKE, roster, log_dir,
             prune_thinking=args.prune_thinking,
         )
-    except ConfigError as exc:
+    except (ConfigError, CheckpointError) as exc:
         parser.error(str(exc))
 
     has_human: bool = "human" in (args.mouse, args.snake)

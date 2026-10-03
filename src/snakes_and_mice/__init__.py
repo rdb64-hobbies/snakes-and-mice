@@ -26,6 +26,7 @@ from .players import (
     PerfectPlayer,
     Player,
     RandomPlayer,
+    RLPlayer,
     ScriptedPlayer,
 )
 from .result import GameResult, MatchResult, PlayerFaultDetail, Termination
@@ -51,6 +52,7 @@ __all__ = [
     "PlayerFaultDetail",
     "PlayerFaultReason",
     "PlayerUnavailable",
+    "RLPlayer",
     "RandomPlayer",
     "ScriptedPlayer",
     "Side",

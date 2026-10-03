@@ -40,6 +40,11 @@ llm-logs/
 # Tournament results (§6), accumulated locally by play-match/play-tournament-matches
 tournament-results.jsonl
 
+# The RL critic's solved-value labels: a local cache the trainer rebuilds on
+# demand. The trained checkpoint itself (rl-models/*.pt) IS tracked, like the
+# perfect-play tables.
+rl-models/solved-values.jsonl
+
 # Recorded mistakes (§5, --mistakes-file), accumulated locally the same way
 mistakes.jsonl
 mistakes-*.jsonl

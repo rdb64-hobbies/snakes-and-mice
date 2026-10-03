@@ -29,12 +29,18 @@ from .players import (
     PerfectPlayer,
     Player,
     RandomPlayer,
+    RLPlayer,
     TieBreak,
 )
 
 SEED_DEFAULT: str = "random"
 
 RANDOM_NAME: dict[Side, str] = {Side.MOUSE: "Randy", Side.SNAKE: "Ransom"}
+
+RL_KIND: str = "rl"
+"""The CLI name of the trained reinforcement-learning player (SPEC-rl-player.md)."""
+
+RL_NAME: dict[Side, str] = {Side.MOUSE: "Rita", Side.SNAKE: "Rasmus"}
 
 
 @dataclass(frozen=True)
@@ -67,7 +73,7 @@ Every name passes its policy explicitly, so each stays pinned to what it names
 whatever :class:`~snakes_and_mice.players.TieBreak`'s default later becomes.
 """
 
-BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random"}) | frozenset(
+BUILTIN_KINDS: frozenset[str] = frozenset({"human", "random", RL_KIND}) | frozenset(
     PERFECT_VARIANTS
 )
 """The player kinds that are *not* roster names — anything else names an LLM.
@@ -88,11 +94,10 @@ register a mistake, being the ground truth every move is graded against, while
 nearly every turn — so a stream of callouts from either carries no signal.
 ``human`` is left out as not being an object of measurement.
 
-Deliberately a separate set from :data:`BUILTIN_KINDS`, which it happens to equal
-today. The two answer different questions and are expected to diverge: a
-reinforcement-learning player (§3) would be built in like ``perfect`` and
-``random``, yet — being neither optimal nor aimless — would be very much worth
-grading.
+Deliberately a separate set from :data:`BUILTIN_KINDS`, which it no longer
+equals: ``rl`` is built in like ``perfect`` and ``random``, yet — being neither
+optimal nor aimless — is very much worth grading, and is the first player to
+make the two sets differ as they were always expected to.
 """
 
 DEFAULT_LOG_DIR: str = "llm-logs"
@@ -127,9 +132,13 @@ def make_player(
     kind: str, side: Side, roster: Roster | None, log_dir: Path | None,
     *, prune_thinking: bool = False,
 ) -> Player:
-    """Build the player for one side. ``kind`` is ``random``, ``human``, one of the
-    :data:`PERFECT_VARIANTS` names, or an LLM roster name (in which case ``roster``
-    must be loaded). ``prune_thinking`` applies only to LLM players (§4)."""
+    """Build the player for one side. ``kind`` is ``random``, ``human``, ``rl``, one
+    of the :data:`PERFECT_VARIANTS` names, or an LLM roster name (in which case
+    ``roster`` must be loaded). ``prune_thinking`` applies only to LLM players (§4).
+
+    ``rl`` raises :class:`~snakes_and_mice.players.CheckpointError` when no trained
+    network is installed; ``play-match`` reports it as a clean error and stops,
+    since without weights there is no player to play."""
     if kind == "human":
         return HumanPlayer(name=SECOND_PERSON)
     if kind == "random":
@@ -137,6 +146,8 @@ def make_player(
     variant: PerfectVariant | None = PERFECT_VARIANTS.get(kind)
     if variant is not None:
         return PerfectPlayer(name=variant.names[side], tie_break=variant.tie_break)
+    if kind == RL_KIND:
+        return RLPlayer.from_checkpoint(name=RL_NAME[side])
     assert roster is not None  # a roster is loaded whenever an LLM name is used
     return LLMPlayer.from_roster(
         kind, roster, prune_thinking=prune_thinking, log_dir=log_dir

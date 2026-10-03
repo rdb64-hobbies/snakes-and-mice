@@ -253,13 +253,17 @@ def test_gradable_sides_excludes_only_the_non_gradable_kinds() -> None:
 
 
 def test_gradability_is_not_the_same_question_as_how_to_build_a_player() -> None:
-    # The two sets are equal today and are still kept apart, because they answer
-    # different questions and are expected to diverge: a built-in player that is
-    # neither optimal nor aimless -- the RL player (§3) -- would belong to
-    # BUILTIN_KINDS while remaining very much worth grading. Anything not named
-    # as non-gradable grades, whether or not it is a roster name.
-    assert NON_GRADABLE_KINDS == BUILTIN_KINDS  # for now
+    # The two sets were kept apart while still equal because they answer
+    # different questions and were expected to diverge. The RL player is what
+    # made them: it is built in like `perfect` and `random`, yet -- being
+    # neither optimal nor aimless -- it is very much worth grading, and it is
+    # the only kind the two sets disagree about.
+    assert BUILTIN_KINDS - NON_GRADABLE_KINDS == {"rl"}
+    assert NON_GRADABLE_KINDS - BUILTIN_KINDS == frozenset()
     assert gradable_sides({Side.MOUSE: "rl"}) == frozenset({Side.MOUSE})
+    assert gradable_sides({Side.MOUSE: "rl", Side.SNAKE: "perfect"}) == frozenset(
+        {Side.MOUSE}
+    )
 
 
 def test_make_observer_composes_watching_with_flagging() -> None:

@@ -6,11 +6,11 @@ board from the start. Point two models at each other for bragging rights. Play a
 pile of games, and tally who wins, who loses, and who can't even follow the game
 rules.
 
-You can also pit an LLM against one of the two built-in opponents: **random**
-and **perfect**. Any model worth the name should beat the random player, and a
-good model should manage to at least not lose against the perfect player. As its
-name suggests, the perfect player cannot be beaten, and a draw is the best
-result available.
+You can also pit an LLM against one of the built-in opponents: **random**,
+**perfect**, and a **trained** one that learned the game by playing itself. Any
+model worth the name should beat the random player, and a good model should
+manage to at least not lose against the perfect player. As its name suggests, the
+perfect player cannot be beaten, and a draw is the best result available.
 
 That goes for you too, if you take a turn yourself. You'll have better luck
 against random and might sometimes beat an LLM.
@@ -27,13 +27,14 @@ choice for an agent.
 Curious how various LLMs actually fared against each other and against
 `perfect`? See [`RESULTS.md`](RESULTS.md).
 
-The full game rules and system design live in [`SPEC.md`](SPEC.md), with the two
+The full game rules and system design live in [`SPEC.md`](SPEC.md), with the three
 substantial player types specified alongside it — the LLM player in
-[`SPEC-llm-player.md`](SPEC-llm-player.md) and the perfect player in
-[`SPEC-perfect-player.md`](SPEC-perfect-player.md). The architecture allows for
+[`SPEC-llm-player.md`](SPEC-llm-player.md), the perfect player in
+[`SPEC-perfect-player.md`](SPEC-perfect-player.md), and the trained one in
+[`SPEC-rl-player.md`](SPEC-rl-player.md). The architecture allows for
 multiple player types, including a scripted bot player for testing, the random
-player, the perfect player, LLM players, and a human player. The design of the
-perfect player is especially interesting.
+player, the perfect player, the trained player, LLM players, and a human player.
+The design of the perfect player is especially interesting.
 
 ## Getting it
 
@@ -69,7 +70,9 @@ uv run play-match --mouse human --snake perfect
 ```
 
 There is more about the perfect player, and why you can't beat it, in [The
-solved game](#the-solved-game) below.
+solved game](#the-solved-game) below. There is also `rl`, a player that was not
+told the rules of good play but worked them out by playing itself a couple of
+million times — see [The trained player](#the-trained-player).
 
 ### Bringing in LLMs
 
@@ -180,6 +183,43 @@ uv run python tools/solver/dump_table.py perfect-tables/C3.table.gz
 The program that did the solving lives in [`tools/solver/`](tools/solver/) and
 has its own [specification](tools/solver/SPEC.md); the player itself is covered
 by [`SPEC-perfect-player.md`](SPEC-perfect-player.md).
+
+## The trained player
+
+`rl` (Rasmus, or Rita as the mouse) is the odd one out. `random` and `perfect`
+both know what they are doing the moment you run them — one is told to flail, the
+other has the whole game solved in advance. This one started out knowing only
+which squares are empty, and got the rest by playing itself.
+
+It is a small neural network: it looks at the board, picks a square, looks at the
+board again with that piece on it, and picks a second. No search, no lookahead,
+no table — just the two guesses, which is why it answers instantly even in the
+opening where `perfect` needs its precomputed answers.
+
+```sh
+uv run play-match --mouse human --snake rl
+```
+
+The point of it is not to out-play `perfect` — nothing can. It is that `perfect`
+plays the *game*, while a trained player can learn to play the *opponent*, and
+LLMs turn out to go wrong in patterned rather than random ways.
+
+The shipped network trained itself for 45 minutes, about 2.3 million games. It
+beats the random player 97.5% of the time, which is the interesting part: that is
+level with `perfect-trappiness`, the player that counts an opponent's losing
+replies exactly, and far above the 62% of the plain perfect player. Nobody told it
+what a trap is. Against `perfect` itself it draws 95 games in 100 and loses the
+other five — so it is genuinely good, and genuinely not perfect.
+
+Whether any of that buys a higher win rate against real LLMs, which is the whole
+point, is still an open question. The design, and what has and has not been
+measured, is in [`SPEC-rl-player.md`](SPEC-rl-player.md).
+
+The shipped network is in [`rl-models/`](rl-models/). To train your own:
+
+```sh
+uv run python tools/rl/train.py --time-budget 600
+```
 
 ## Development
 

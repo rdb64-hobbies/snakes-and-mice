@@ -13,7 +13,7 @@ their work touches. Section numbers are stable and never reused.
 | **`SPEC.md`** (this file) | The game and rules (§2), the `Player` abstraction (§3), matches (§5), tournaments (§6), the CLI (§7), architecture (§8), tooling (§9), versioning and scope (§11). |
 | [`SPEC-llm-player.md`](SPEC-llm-player.md) | The **LLM player** in full: Pydantic AI, structured output, the message thread, reasoning pruning, model/provider selection, thinking levels, message logging, endpoint probes. Summarized in §4. |
 | [`SPEC-perfect-player.md`](SPEC-perfect-player.md) | The **algorithmic (perfect) player** in full: alpha–beta search, depth-aware scoring, the 32-element symmetry group and transposition table, the tie-break, the opening table, the solved result. Summarized in §10. |
-| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** (planned): the goal, the training strategy, the algorithm and network. Summarized in §3, "Player types". |
+| [`SPEC-rl-player.md`](SPEC-rl-player.md) | The **reinforcement-learning player** in full: the goal, the training strategy, the algorithm, network and action space, and what the shipped implementation does (self-play PPO, the shaping term, the solved-value critic, the trainer in `tools/rl/`). Summarized in §3, "Player types". |
 | [`SPEC-mistake-model.md`](SPEC-mistake-model.md) | The **mistake model**: the empirical investigation into whether and how LLMs make systematic mistakes at this game, and the hand-crafted scoring function built from it. Consumed by both `SPEC-rl-player.md` and `SPEC-perfect-player.md`, "Selecting a variant". |
 | [`tools/solver/SPEC.md`](tools/solver/SPEC.md) | The **offline solver** that produces the perfect player's opening table, and the table file format. |
 
@@ -471,7 +471,7 @@ composition, not required inheritance — the `Player` ABC does not mandate it.
 
 The engine and interface must not need changes to add a new player type; each is
 just another implementation of the player interface. The types, in
-implementation order (the first four are implemented — see the milestones in §11):
+implementation order (all six are implemented — see the milestones in §11):
 
 1. **Scripted player** _(implemented — 0.1)_. Initialized with a predetermined
    ordered sequence of moves; returns them one at a time. Used to drive
@@ -500,9 +500,13 @@ implementation order (the first four are implemented — see the milestones in �
 5. **Algorithmic player** _(implemented — 1.3)_. Plays **perfectly** via full-depth alpha–beta
    (minimax with pruning) search to terminal positions, backed by a transposition
    table keyed on a symmetry-canonical board. Specified in full in §10.
-6. **Reinforcement-learning player** _(planned)_. A policy trained via RL (self-play). Likely
-   needs supporting tooling (training loop, model persistence) beyond the game
-   engine itself. Full specification: [`SPEC-rl-player.md`](SPEC-rl-player.md).
+6. **Reinforcement-learning player** _(implemented — 1.10)_. A policy network trained by
+   self-play PPO, played greedily with no search. Selected by name (`rl`) like
+   `random` and the `perfect` variants, and — being neither optimal nor aimless —
+   the first built-in player whose moves are worth **grading** (§5). It is the one
+   player that needs supporting tooling beyond the engine: a trainer (`tools/rl/`)
+   and a checkpoint it loads, without which it refuses to play. Full specification:
+   [`SPEC-rl-player.md`](SPEC-rl-player.md).
 
 Others may be added as the project evolves.
 
@@ -1007,10 +1011,13 @@ and an `Observer` (§3) watching at a selectable **observation level**
 player's own input paces a game.
 
 **`play-match`** — play or watch a **single match**. `--mouse` and `--snake` each
-name who plays that side: `random`, `human`, one of the three perfect algorithmic
-players (`perfect`, `perfect-trappiness`, `perfect-mistake-model` — all optimal,
-differing only in how they choose among equally optimal moves, §10), or an **LLM
-roster name** from `players.yaml` (§4). `--games N` (default 1) sets the match length with sides fixed
+name who plays that side: `random`, `human`, `rl` (the trained
+reinforcement-learning player, `SPEC-rl-player.md`), one of the three perfect
+algorithmic players (`perfect`, `perfect-trappiness`, `perfect-mistake-model` — all
+optimal, differing only in how they choose among equally optimal moves, §10), or an
+**LLM roster name** from `players.yaml` (§4). `rl` needs a trained checkpoint
+installed; without one the command reports that and stops, since there is no
+player to play. `--games N` (default 1) sets the match length with sides fixed
 for the match (§5); `--seed` sets where the snake is seeded each game — `random`
 (the default: a fresh cell per game) or a fixed cell like `B3` (§2.4, §5);
 `--watch` defaults to `move`. If either player is human the
@@ -1080,8 +1087,9 @@ Rough module layout:
   *fallible* defender to hold, built from the one measured bias feature
   (`SPEC-mistake-model.md`, "The mistake model"). Pure position scoring, depending on
   nothing but the board, because it has several consumers that share nothing else:
-  the `perfect-mistake-model` tie-break key today (§10), and the RL player's shaping
-  term and data-collection ranking (`SPEC-rl-player.md`) later. Not to be confused
+  the `perfect-mistake-model` tie-break key (§10) and the RL player's training-time
+  shaping term (`SPEC-rl-player.md`); its data-collection ranking, for the steps of
+  that loop that spend live-LLM time, is still to come. Not to be confused
   with `mistakes` below, which detects mistakes that *were* made; this one scores how
   likely one is.
 - `mistakes` — flagging mistakes (§5): the `Mistake` record, its JSON encoding, and
@@ -1106,7 +1114,11 @@ Rough module layout:
   alongside it, which parses those files into typed specs and does no more:
   model/agent resolution — and with it every Pydantic AI import — stays in the
   LLM player module. YAML parsing is thus kept out of the player, and provider
-  knowledge out of the roster loader.
+  knowledge out of the roster loader. The RL player follows the same shape one
+  level down: `players/rl_net` holds the board encoding, the policy/value network
+  and the checkpoint format, and `players/rl` holds the player that runs one —
+  the split `players/perfect` and `players/table` already use, and the reason the
+  trainer and the player cannot disagree about the architecture.
 - `console` — the shared presentation layer: board rendering, result summaries,
   and the stdout `Observer`.
 - **CLI frontends** — one thin module per command (§7): `match_cli` (`play-match`),
@@ -1119,9 +1131,13 @@ Rough module layout:
   it measures is: the endpoint probes (§4, "Probing a deployment"), the machine
   comparison (§4, "Comparing two machines"), the message-log reader (§4, "Message
   logging"), the tie-break benchmark (§10, "Choosing among
-  optimal moves"), and the offline solver, which has its own document
+  optimal moves"), the RL trainer (`tools/rl/`, specified in `SPEC-rl-player.md`),
+  and the offline solver, which has its own document
   (`tools/solver/SPEC.md`). They import the package but nothing in
   the package imports them, so a tool may take dependencies the engine does not have.
+  The RL trainer is the case where that rule bends the other way: the *player* needs
+  PyTorch to run its network at all, so torch is a dependency of the package and not
+  only of the tool.
 
 ## 9. Tech stack & tooling
 
@@ -1129,6 +1145,11 @@ Rough module layout:
 - **Environment & dependencies:** `uv`.
 - **Version control:** `git`.
 - **Tests:** `pytest`, running deterministic games driven by scripted players.
+- **Reinforcement learning:** `torch`. The RL player (§3) runs a small MLP to choose
+  each move, so PyTorch is a dependency of the package itself, not only of the
+  trainer in `tools/rl/`. It is the one heavyweight runtime dependency, taken
+  deliberately so that the trained network is defined exactly once and a
+  checkpoint cannot be loaded into a differently-shaped net.
 - **LLM access:** `pydantic-ai` — a uniform interface across providers (Anthropic,
   OpenAI, Google Gemini, OpenRouter, and OpenAI-compatible custom endpoints), with
   structured output and a unified thinking/effort control. Roster and provider
@@ -1267,7 +1288,22 @@ progress toward that, not incidental churn.
     fact that effort scales differ in size across model families — `high` is one
     family's ceiling and two rungs below another's — so the same label was already
     buying materially different amounts of reasoning. The default is unchanged, so
-    a roster that names no levels behaves exactly as before. _(current)_
+    a roster that names no levels behaves exactly as before.
+  - **1.10** — the **reinforcement-learning player** (§3, `SPEC-rl-player.md`):
+    a policy network trained by self-play PPO, shipped as the built-in `rl` name
+    with its trainer in `tools/rl/`. This is step 1 of that document's loop — the
+    bootstrap agent, learned from self-play and `random` with its critic anchored
+    to the solved game and the mistake model's shaping term wired in. The steps
+    that spend live-LLM time (2–6) are not part of it, and neither is the
+    comparison the player exists to win: whether it beats an LLM more often than
+    `perfect` does is measured against the baselines 1.8 shipped for the purpose,
+    not claimed here. What the first run does show is that the premise has legs —
+    the agent converts a `random` opponent's mistakes at 97.5%, level with the
+    hand-coded trap counter and far above the bare player's 62.3%, without being
+    given the trap count. It also loses 5% of its games to `perfect`, so it is not
+    yet safe in the way the sub-spec's secondary constraint asks for. It also makes `rl` the first built-in player that is
+    **graded** for mistakes (§5), which is what finally separates "how to build a
+    player" from "whose moves are worth measuring". _(current)_
 
 Each of these players — LLM, algorithmic, RL — arrives without requiring engine
 changes, as the `Player` abstraction (§3) is designed to allow. The algorithmic
@@ -1285,11 +1321,14 @@ Out of scope for now:
 
 Next up, in no particular order — each already specified in full elsewhere:
 
-- **Implement the RL player.** Build the self-play PPO agent already designed
-  (`SPEC-rl-player.md`, "The algorithm and network").
 - **Evaluate the RL player against LLMs.** Check whether it beats real LLMs
   more often than the unranked `perfect` player does — the project's actual
   success criterion (`SPEC-rl-player.md`, "Goal"; "Periodic fine-tuning and
-  evaluation against real LLMs").
+  evaluation against real LLMs"). The player and its trainer landed in 1.10; this
+  is the measurement they exist for, and it is still unmade.
+- **Spend live-LLM time on the mistake model.** Steps 2–6 of
+  `SPEC-rl-player.md`, "The loop": probe the target model from on-policy states,
+  densify around them, and mix what is learned back into training. 1.10 built
+  only step 1.
 - **Tournament vs. frontier and large open-weight hosted models.** Run the
   hosted-API leg of the benchmark (`RESULTS.md`, §2 "Frontier LLMs").
