@@ -41,9 +41,9 @@ llm-logs/
 tournament-results.jsonl
 
 # The RL critic's solved-value labels: a local cache the trainer rebuilds on
-# demand. The trained checkpoint itself (rl-models/*.pt) IS tracked, like the
-# perfect-play tables.
-rl-models/solved-values.jsonl
+# demand, in whatever size or distribution a run asked for. The trained
+# checkpoint itself (rl-models/*.pt) IS tracked, like the perfect-play tables.
+rl-models/solved-values*.jsonl
 
 # Recorded mistakes (§5, --mistakes-file), accumulated locally the same way
 mistakes.jsonl

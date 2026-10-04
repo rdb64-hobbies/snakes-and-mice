@@ -12,9 +12,26 @@ empties, ~10 ms at 12, and under a millisecond from 10 down. So labelling tens o
 thousands of positions is minutes, not hours — but it is minutes *every run*,
 which is why it lands in a file.
 
-Positions are sampled from **every** seed and from a mix of random and
-lightly-greedy play, not from the current policy: this dataset is about the game,
-not about the agent, and is built before the agent exists.
+Positions are sampled from **every** seed, not from the current policy: this
+dataset is about the game, not about the agent, and is built before the agent
+exists.
+
+**Half the playouts are deliberately one-sided**, because symmetric ones do not
+teach the critic what losing looks like. Measured on 400,000 symmetrically
+sampled positions: 37.6% won for the mover, 62.0% drawn, and **0.4% lost**. The
+asymmetry is structural rather than bad luck — "won for the mover" only means *I
+have a win available now*, which a careless opponent concedes constantly, while
+"lost for the mover" needs the **opponent** to hold a threat set no single move
+answers, which is exactly what `SPEC-mistake-model.md` says ordinary play
+produces at no useful rate. A value head fit to that data was accurate on won
+(MSE 0.013) and drawn (0.005) positions and useless on lost ones (0.674, against
+a target of −1 — it calls a lost position a draw). Neither a wider network (tried
+up to 1.1 M parameters) nor more of the same labels (tried 9x) moved it.
+
+So :func:`sample_positions` runs some playouts with one side building lines hard
+and the other placing at random, and keeps only the **random** side's turns (see
+:data:`ATTACK_SHARE`). Those are the positions where someone is actually in
+trouble.
 
     uv run python tools/rl/solved.py [--out FILE] [--positions N]
 """
@@ -26,21 +43,71 @@ import json
 import random
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from snakes_and_mice.board import LINES, Board
 from snakes_and_mice.core import BOARD_SIZE, Cell, Side
+from snakes_and_mice.mistake_model import SCORE_SPLIT, threat_score
 from snakes_and_mice.players.perfect import evaluate
 from snakes_and_mice.players.rl_net import board_masks, own_masks
 from snakes_and_mice.players.table import PerfectTable, load_for_seed
 
 DEFAULT_PATH: Path = Path("rl-models/solved-values.jsonl")
-DEFAULT_POSITIONS: int = 40_000
+DEFAULT_POSITIONS: int = 400_000
+"""How many positions to label by default.
+
+400,000 rather than the 40,000 of earlier runs. Overall test error only improves
+25% over that range — the curve flattens early, so volume alone was never the
+lever — but it is what makes the danger filter above pay off, yielding ~10,000
+distinct losing positions against ~1,600. Trained on them and scored against a
+representative test set, the value head's error on losing positions falls from
+0.674 to 0.253, with won and drawn positions unchanged.
+
+A cache built by an older generator holds 40,000 rows and so is below this count,
+which makes :func:`load_or_build` rebuild it rather than silently reuse a file
+with the wrong distribution.
+"""
 
 ALL_SEEDS: tuple[Cell, ...] = tuple(
     Cell(r, c) for r in range(BOARD_SIZE) for c in range(BOARD_SIZE)
 )
+
+ATTACK_SHARE: float = 0.5
+"""Fraction of playouts run one-sided, to harvest positions that are *lost*.
+
+Half, so the dataset keeps a broad sample of ordinary play alongside the
+enriched one: a critic that only ever saw danger would be as badly calibrated as
+one that never did. See this module's docstring for the measurements behind it.
+"""
+
+ATTACKER_GREEDY: float = 1.0
+"""Line-building rate for the strong side of a one-sided playout."""
+
+VICTIM_GREEDY: float = 0.0
+"""Line-building rate for the weak side — pure random placement."""
+
+BROAD_KEEP: float = 0.15
+"""Chance of labelling a candidate the danger filter did *not* flag.
+
+Labelling, not sampling, is what costs: a playout is nearly free while
+:func:`~snakes_and_mice.players.perfect.evaluate` runs at ~200 positions a
+second. So candidates are filtered before the expensive call, by the mistake
+model's own :func:`~snakes_and_mice.mistake_model.threat_score` — measured over
+12,001 positions to be an almost exact detector of a losing one:
+
+| ``threat_score`` | share of positions | lost |
+|---|---|---|
+| 0 | 81.6% | 0.0% |
+| 1 | 5.7% | 0.1% |
+| 2 (:data:`SCORE_SPLIT`) | 12.7% | **7.1%** |
+
+Every ``SCORE_SPLIT`` candidate is labelled; the rest are kept at this rate.
+0.15 against a 12.7% flagged share puts the two halves at roughly parity, which
+keeps a broad sample of ordinary play beside the enriched one — a critic that
+only ever saw danger would be as badly calibrated as one that never did.
+"""
 
 
 @dataclass(frozen=True)
@@ -71,14 +138,25 @@ def solved_target(board: Board, side: Side, table: PerfectTable | None) -> float
 
 
 def sample_positions(
-    count: int, rng: random.Random, greedy_rate: float = 0.5
+    count: int,
+    rng: random.Random,
+    greedy_rate: float = 0.5,
+    attack_share: float = ATTACK_SHARE,
 ) -> list[Labelled]:
     """Label ``count`` distinct non-terminal positions with their exact value.
 
-    ``greedy_rate`` is the chance that a playout step prefers cells on lines it
-    already occupies rather than placing uniformly. Purely random play stays in
-    the drawn, featureless part of the tree; biasing half the playouts toward
-    line-building is what puts won and lost positions in the dataset at all.
+    ``greedy_rate`` is the chance that a step of a *symmetric* playout prefers
+    cells on lines it already occupies rather than placing uniformly; purely
+    random play stays in the drawn, featureless part of the tree.
+
+    ``attack_share`` of playouts are instead **one-sided**: one side builds lines
+    every move, the other places at random, and only the random side's turns are
+    kept.
+
+    Candidates then pass a danger filter before being labelled — all of those the
+    mistake model flags, :data:`BROAD_KEEP` of the rest — which is what actually
+    puts losing positions in the dataset. The one-sided playouts alone only lift
+    them from 0.37% to 0.93%; the filter is the part that works.
     """
     tables: dict[str, PerfectTable | None] = {}
     seen: set[tuple[int, int, bool]] = set()
@@ -88,13 +166,18 @@ def sample_positions(
         if seed.label not in tables:
             tables[seed.label] = load_for_seed(seed)
         table: PerfectTable | None = tables[seed.label]
-        for board, side in _playout(seed, rng, greedy_rate):
+        for board, side in _sample_playout(seed, rng, greedy_rate, attack_share):
             mouse, snake = board_masks(board)
             key: tuple[int, int, bool] = (mouse, snake, side is Side.MOUSE)
             if key in seen:
                 continue
-            seen.add(key)
             mine, theirs = own_masks(board, side)
+            # The filter asks what the OPPONENT threatens with us to move, which
+            # is `threat_score`'s own frame (attacker, defender-to-move).
+            flagged: bool = threat_score(theirs, mine) >= SCORE_SPLIT
+            if not flagged and rng.random() >= BROAD_KEEP:
+                continue  # skipped before paying for a label, not after
+            seen.add(key)
             labelled.append(
                 Labelled(mine, theirs, solved_target(board, side, table))
             )
@@ -103,10 +186,35 @@ def sample_positions(
     return labelled
 
 
-def _playout(
-    seed: Cell, rng: random.Random, greedy_rate: float
+def _sample_playout(
+    seed: Cell, rng: random.Random, greedy_rate: float, attack_share: float
 ) -> list[tuple[Board, Side]]:
-    """Every non-terminal position along one game, with the side to move.
+    """One playout, either symmetric or one-sided, as ``attack_share`` decides.
+
+    The one-sided case picks its attacker at random so neither Mouse nor Snake
+    is systematically the one in trouble — the encoding is side-agnostic, but the
+    seeded snake makes the two seats genuinely different positions to defend.
+    """
+    if rng.random() >= attack_share:
+        rates: Mapping[Side, float] = {
+            Side.MOUSE: greedy_rate, Side.SNAKE: greedy_rate
+        }
+        return _playout(seed, rng, rates)
+    attacker: Side = Side.MOUSE if rng.random() < 0.5 else Side.SNAKE
+    rates = {attacker: ATTACKER_GREEDY, attacker.other: VICTIM_GREEDY}
+    return _playout(seed, rng, rates, record=attacker.other)
+
+
+def _playout(
+    seed: Cell,
+    rng: random.Random,
+    greedy: Mapping[Side, float],
+    record: Side | None = None,
+) -> list[tuple[Board, Side]]:
+    """Non-terminal positions along one game, with the side to move.
+
+    ``greedy[side]`` is that side's chance of preferring cells on its own lines.
+    ``record`` keeps only that side's turns; ``None`` keeps every turn.
 
     The game is played out with `Board` itself, so a position in the dataset is
     reachable under the real rules by construction.
@@ -118,9 +226,10 @@ def _playout(
         empties: list[Cell] = board.empty_cells()
         if len(empties) < 2:
             return states
-        states.append((board.copy(), side))
-        greedy: bool = rng.random() < greedy_rate
-        for cell in _two_cells(board, side, empties, rng, greedy):
+        if record is None or side is record:
+            states.append((board.copy(), side))
+        is_greedy: bool = rng.random() < greedy[side]
+        for cell in _two_cells(board, side, empties, rng, is_greedy):
             board.place(cell, side)
             if board.winner() is not None or board.is_cats_game():
                 return states

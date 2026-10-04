@@ -42,6 +42,11 @@ the value head is anchored to what the game actually is, and PPO's own learning
 goes into the policy rather than into rediscovering position values. The same
 regression runs alone for ``--pretrain-epochs`` before any game is played.
 
+That dataset's *composition* turned out to matter far more than its size or the
+network's width: see :mod:`solved`, which enriches it for positions where the
+side to move is in trouble, because ordinary play produces almost none and a
+value head fit without them cannot tell a lost position from a drawn one.
+
 Evaluation is greedy — it plays the `RLPlayer` the checkpoint will produce, not
 the sampling learner — so the number reported is the number a match would see.
 
@@ -103,7 +108,12 @@ from snakes_and_mice.players.rl_net import (
 )
 from snakes_and_mice.result import GameResult, Termination
 from rollout import DEFAULT_SHAPING_WEIGHT, Episode, RecordingPlayer, Step, finish
-from solved import DEFAULT_PATH as SOLVED_PATH, Labelled, load_or_build
+from solved import (
+    DEFAULT_PATH as SOLVED_PATH,
+    DEFAULT_POSITIONS as SOLVED_POSITIONS,
+    Labelled,
+    load_or_build,
+)
 
 ALL_SEEDS: tuple[Cell, ...] = tuple(Cell(r, c) for r in range(5) for c in range(5))
 
@@ -527,7 +537,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--out", type=Path, default=Path("rl-models/rl.pt"))
     parser.add_argument("--solved", type=Path, default=SOLVED_PATH)
-    parser.add_argument("--solved-positions", type=int, default=40_000)
+    parser.add_argument(
+        "--solved-positions", type=int, default=SOLVED_POSITIONS,
+        help=f"exact-valued positions for the critic (default: "
+             f"{SOLVED_POSITIONS}); built once and cached, ~29 min",
+    )
     parser.add_argument("--iterations", type=int, default=Settings.iterations)
     parser.add_argument(
         "--games-per-iteration", type=int, default=Settings.games_per_iteration
