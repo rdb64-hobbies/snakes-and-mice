@@ -28,11 +28,13 @@ positions barely repeat). One `perfect` game therefore costs about 11,000 free
 ones, so any share large enough to matter as *training* costs most of the run's
 volume.
 
-So ``--perfect-share`` defaults to **0**: `perfect` earns its keep here as the
-yardstick the agent is measured against after every eval interval, not as a
-sparring partner. Pass a small share to mix it in anyway — the budget arithmetic
-is the whole of the argument, and it is a curriculum detail the spec explicitly
-leaves open.
+That argument once put ``--perfect-share`` at 0, on the reasoning that `perfect`
+earns its keep as the yardstick rather than as a sparring partner. **Measured,
+that was wrong**: a 2% share over 3,100 iterations halved the trained player's
+losses to bare `perfect`, from 9.0% to 4.5% across 200 balanced games, at no cost
+against `random` (96.2% either way). The default is now
+:data:`DEFAULT_PERFECT_SHARE`. Cost is still the reason it is *small* — the
+arithmetic above is unchanged — but it is no longer a reason for it to be zero.
 
 **The critic is pinned to ground truth.** Every update adds a regression of the
 value head against exact solved values from a fixed dataset (:mod:`solved`), so
@@ -61,12 +63,15 @@ network stubbed out), so perfect batching would reach ~235 ms an iteration from
 Python floor it cannot touch.
 
 None of which matters, because **throughput is not this trainer's constraint**.
-The shipped checkpoint reached 99.0% against `random` at iteration 1000, 306
-seconds in; the remaining 40 minutes of its 45-minute budget produced 96.5, 98.5,
-96.0, 96.5, 98.0, 97.5 and 96.5 — noise around the same level, with the first
-evaluation the best of them. Compute spent here is already not buying policy
-quality. What the evidence points at instead is the opponent pool
-(SPEC-rl-player.md, "What the first trained agent actually does").
+Play against `random` converges by iteration ~100 — about 17 minutes — and is flat
+in a 94–96% band from 125 onward. Any run longer than that is spending its time
+on something other than bulk policy quality against `random`.
+
+What it *can* still buy is exposure to opponents that are expensive per game,
+which is exactly the `--perfect-share` finding above: the 8-hour run was ~99% past
+convergence by this measure and still halved the loss rate to `perfect`. So the
+lever is the opponent pool rather than the clock, and a GPU would not help with
+either.
 """
 
 from __future__ import annotations
@@ -126,6 +131,21 @@ FREE_POOL: dict[str, float] = {SELF_PLAY: 0.60, "random": 0.40}
 
 Measured on this repo: a self-play game is ~0.9 ms and a `random` game ~0.5 ms, so
 both really are the unlimited, effectively free opponents the spec assumes.
+"""
+
+DEFAULT_PERFECT_SHARE: float = 0.02
+"""Fraction of training games played against perfect play.
+
+Two percent is what produced the shipped checkpoint, and what halved its losses
+to bare `perfect` (9.0% to 4.5% over 200 balanced games). It is small because a
+`perfect` game costs ~11,000 free ones, not because perfect play is of little
+use: at 256 games an iteration this is ~5 such games, which dominates the
+iteration's wall clock at ~9 s against ~0.3 s for everything else.
+
+The share is what was measured; the *amount* of exposure also depends on how many
+iterations run, and the shipped checkpoint had 3,100 of them (~15,900 `perfect`
+games) under an 8-hour ``--time-budget``. A default 400-iteration run gets ~2,050,
+which is untested — raise the iteration count or the budget for a real run.
 """
 
 PERFECT_SPLIT: dict[str, float] = {"perfect": 0.75, "perfect-trappiness": 0.25}
@@ -522,10 +542,12 @@ def main(argv: list[str] | None = None) -> None:
                         help="games vs random in the closing baseline report; "
                              "each perfect variant gets a quarter as many")
     parser.add_argument(
-        "--perfect-share", type=float, default=0.0, metavar="FRACTION",
-        help="fraction of training games played against a perfect opponent; "
-             "0 (the default) keeps perfect play for evaluation only, because "
-             "one such game costs about 11,000 free ones",
+        "--perfect-share", type=float, default=DEFAULT_PERFECT_SHARE,
+        metavar="FRACTION",
+        help=f"fraction of training games played against a perfect opponent "
+             f"(default: {DEFAULT_PERFECT_SHARE}); measured to halve losses to "
+             f"`perfect`, and the reason a run takes hours rather than minutes "
+             f"— pass 0 for a fast run that skips perfect play entirely",
     )
     parser.add_argument("--time-budget", type=float, default=0.0, metavar="SECONDS",
                         help="stop after this much wall clock (0: no limit)")

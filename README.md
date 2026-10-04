@@ -71,7 +71,7 @@ uv run play-match --mouse human --snake perfect
 
 There is more about the perfect player, and why you can't beat it, in [The
 solved game](#the-solved-game) below. There is also `rl`, a player that was not
-told the rules of good play but worked them out by playing itself a couple of
+told the rules of good play but worked them out by playing itself most of a
 million times — see [The trained player](#the-trained-player).
 
 ### Bringing in LLMs
@@ -204,12 +204,12 @@ The point of it is not to out-play `perfect` — nothing can. It is that `perfec
 plays the *game*, while a trained player can learn to play the *opponent*, and
 LLMs turn out to go wrong in patterned rather than random ways.
 
-The shipped network trained itself for 45 minutes, about 2.3 million games. It
-beats the random player 97.5% of the time, which is the interesting part: that is
-level with `perfect-trappiness`, the player that counts an opponent's losing
-replies exactly, and far above the 62% of the plain perfect player. Nobody told it
-what a trap is. Against `perfect` itself it draws 95 games in 100 and loses the
-other five — so it is genuinely good, and genuinely not perfect.
+The shipped network trained itself for eight hours, about 794,000 games. It beats
+the random player 96% of the time, which is the interesting part: that is near
+`perfect-trappiness`, the player that counts an opponent's losing replies exactly,
+and far above the 62% of the plain perfect player. Nobody told it what a trap is.
+Against `perfect` itself it draws about 95 games in 100 and loses the other five —
+so it is genuinely good, and genuinely not perfect.
 
 Whether any of that buys a higher win rate against real LLMs, which is the whole
 point, is still an open question. The design, and what has and has not been
@@ -218,8 +218,14 @@ measured, is in [`SPEC-rl-player.md`](SPEC-rl-player.md).
 The shipped network is in [`rl-models/`](rl-models/). To train your own:
 
 ```sh
-uv run python tools/rl/train.py --time-budget 600
+uv run python tools/rl/train.py --time-budget 600 --perfect-share 0
 ```
+
+That takes ten minutes and gets you a player that beats `random` about as often
+as the shipped one — play against the random player converges in roughly the
+first twenty. Dropping `--perfect-share 0` is what costs hours instead: a few
+percent of games against the perfect player, which is slow to play but halves how
+often the trained player loses to it.
 
 ## Development
 

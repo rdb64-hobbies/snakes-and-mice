@@ -1297,11 +1297,12 @@ progress toward that, not incidental churn.
     that spend live-LLM time (2–6) are not part of it, and neither is the
     comparison the player exists to win: whether it beats an LLM more often than
     `perfect` does is measured against the baselines 1.8 shipped for the purpose,
-    not claimed here. What the first run does show is that the premise has legs —
-    the agent converts a `random` opponent's mistakes at 97.5%, level with the
-    hand-coded trap counter and far above the bare player's 62.3%, without being
-    given the trap count. It also loses 5% of its games to `perfect`, so it is not
-    yet safe in the way the sub-spec's secondary constraint asks for. It also makes `rl` the first built-in player that is
+    not claimed here. What the runs do show is that the premise has legs —
+    the agent converts a `random` opponent's mistakes at 96.2%, near the hand-coded
+    trap counter's 98.0% and far above the bare player's 62.3%, without being given
+    the trap count. It still loses 4.5% of its games to `perfect`, so it is not yet
+    safe in the way the sub-spec's secondary constraint asks for, though mixing a
+    2% share of `perfect` games into training halved that from 9.0%. It also makes `rl` the first built-in player that is
     **graded** for mistakes (§5), which is what finally separates "how to build a
     player" from "whose moves are worth measuring". _(current)_
 

@@ -344,17 +344,32 @@ game is played, and as an auxiliary loss resampled every minibatch thereafter �
 
 ### What the first trained agent actually does
 
-One run, 2026-09-29: 8,993 iterations of 256 games — **2.3 M games in 45 minutes**
-on a laptop CPU — against the default pool (self-play 60%, `random` 40%, no
-`perfect`). The network is 85,530 parameters over a (256, 256) trunk. Greedy play,
-which is what a match faces.
+The shipped checkpoint, 2026-10-03: 3,100 iterations of 256 games — **794,000
+games in 8 hours** on an idle Mac Studio CPU — against self-play 58.8%, `random`
+39.2%, `perfect` 1.5% and `perfect-trappiness` 0.5%. The network is 85,530
+parameters over a (256, 256) trunk. Greedy play, which is what a match faces.
+
+It replaced a first agent trained the same way but with **no `perfect` games at
+all** (8,993 iterations, 2.3 M games, 45 minutes). The two are equally good
+against `random` and the newer one loses half as often to `perfect`; see
+"Longer would not have helped", below, for the comparison.
 
 | Opponent | Games | Win | Draw | Loss |
 |---|---:|---:|---:|---:|
-| `random` | 120 | 97.5% | 2.5% | 0% |
-| `perfect` | 100 | 0% | 95–96% | **4–5%** |
-| `perfect-trappiness` | 30 | 0% | 93% | 7% |
-| `perfect-mistake-model` | 30 | 0% | 90% | 10% |
+| `random` | 400 | 96.2% | 3.8% | 0% |
+| `perfect` | 200 | 0% | 95.5% | **4.5%** |
+| `perfect-trappiness` | 50 | 0% | 88% | 12% |
+| `perfect-mistake-model` | 50 | 0% | 88% | 12% |
+
+**How these are measured matters more than it looks.** Every row uses a
+*balanced* schedule — each of the 25 seeds equally often, alternating seats,
+which is what `train.py`'s `evaluate_against` does. A `--seed random` match does
+not qualify: seed cells differ sharply in difficulty (`C3` lies on both
+diagonals, `A1` on neither), and four 100-game random-seed samples of one
+checkpoint gave 4, 5, 12 and 11 losses against bare `perfect` — a spread that
+swamps any difference worth measuring. An earlier version of this table reported
+"4–5%" from two of those lucky draws. **Do not compare two players with
+`--seed random`.**
 
 Two readings, one encouraging and one not.
 
@@ -367,8 +382,10 @@ is the mechanism the whole player is premised on, working: it is converting a
 fallible opponent's errors at close to the rate an exact search does.
 
 **It is not safe against perfect play.** The Goal's secondary constraint asks that
-the RL player "rarely if ever *lose* to `perfect`." 5% over 100 games is *rarely*,
-not *never*, and the constraint is only partly met. An earlier draft of this section
+the RL player "rarely if ever *lose* to `perfect`." 4.5% over 200 balanced games
+is *rarely*, not *never*, and the constraint is only partly met — though it is
+twice as close as the first trained agent got, which lost 9.0% on the same
+schedule before `perfect` entered its training pool. An earlier draft of this section
 read a side-dependence into the loss rate — 8% as Mouse against 2% as Snake — and
 that was 4 losses against 1 over 50 games each, far too few to carry the claim. A
 second 100-game run split 2 and 2. **There is no measured side effect**; the
@@ -376,17 +393,21 @@ earlier reading was noise. None of the 4–5% is surprising for a policy trained
 without a single `perfect` game in the pool, and that pool is the obvious thing
 to attack — but with a *differently mixed* run, not a longer one.
 
-**Longer would not have helped: this run plateaued after five minutes.** It
-reached 99.0% against `random` at iteration 1000, 306 s in, and the remaining 40
-minutes of the budget produced 96.5, 98.5, 96.0, 96.5, 98.0, 97.5 and 96.5 —
-noise around one level, with the first evaluation the best of the eight. Roughly
-89% of the compute bought nothing measurable. That is the strongest available
-argument that the binding constraint is *what* the agent plays against rather
-than how many games it gets: those 40 idle minutes would have afforded ~430
-`perfect` games at 5.5 s each, which is a curriculum this document has not yet
-tried and which needs no new code, only a non-zero `--perfect-share`. It is also
-why optimizing rollout throughput is the wrong lever, and the trainer's module
-docstring records the measurements retiring that idea.
+**Play against `random` converges in about 17 minutes**, at iteration ~100 of
+256 games, and is flat in a 94–96% band from 125 onward. (A finer eval interval
+on the second run showed this; the first run's earliest evaluation was at
+iteration 1000, which is why it looked like a plateau at five minutes rather than
+at one.) Measured against `random`, then, nearly all of any longer run's compute
+buys nothing.
+
+**But it is not wasted — it buys the expensive opponent.** The run that produced
+this checkpoint was ~99% past that convergence point and still halved the loss
+rate to bare `perfect`, from 9.0% to 4.5% across 200 balanced games, by spending
+8 hours on a 2% `perfect` share (3,100 iterations, ~15,900 `perfect` games). So
+the binding constraint is *what* the agent plays against, as suspected, and the
+way to spend an idle machine on it is a non-zero `--perfect-share` rather than
+more games of the same. Optimizing rollout throughput remains the wrong lever,
+for the reasons the trainer's module docstring records.
 
 **The number that matters is not here.** Every row above is a mechanical opponent.
 Whether the agent beats an LLM more often than `perfect` does — the Goal, the only
