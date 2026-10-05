@@ -540,3 +540,107 @@ promising next step would be varying board position or line role of the target
 cell rather than only its recency — but it stays a documented lead, not a
 scored feature, until it can predict which cells get forgotten rather than only
 explain the ones that already were.
+
+## Validation against 588 real blunders, 2026-10-05
+
+Every finding above rests on enriched probes of a dozen or two constructed
+positions. By now `mistakes.jsonl` holds **588 `draw->loss` blunders by
+`qwen-3-8-rtx`** recorded in ordinary play, each with the full board and the move
+chosen — a corpus two orders of magnitude larger than any probe here, and one the
+model was never fitted to. Measured with `tools/fit_move_preference.py`.
+
+### The feature holds, and now has a per-opportunity number
+
+Positions at `SCORE_SPLIT` are **2.0%** of the to-move positions arising in
+strong play (measured over 457 positions of `rl`-vs-`perfect`) but **33.8%** of
+qwen's `draw->loss` blunders. Scoring the base rate against looser play instead
+(12.7%, from the random playouts in `tools/rl/solved.py`) the enrichment is 2.7x
+rather than 17x; the direction is firm, the multiplier is not.
+
+Better, the two can be divided. Single-threat positions are 8.8x more common than
+double-threat ones (32.6% against 3.7%), while the blunders split only 1.6 : 1 —
+so **the per-opportunity failure rate is ~5.3x worse on two threats than on one.**
+That is the same claim as §"A second lever" (4 of 4 defended, falling to 2 of 4)
+with n = 588 behind it instead of n = 8, and it is the number that matters for a
+player deciding what to engineer.
+
+`win->draw` blunders are 100% at score 0, as they should be: missing one's own
+win has nothing to do with the opponent's threats, and the model makes no claim
+about it.
+
+### But most of the *volume* of losses is single-threat
+
+62.4% of the blunders sit below `SCORE_SPLIT`, and of those **93.3% are positions
+holding exactly one live threat the defender failed to answer** (363 of 389; 4
+held none, 22 held two that an aligned move covered).
+
+This does **not** contradict §"Isolated single threats are almost never missed."
+That section measures a per-opportunity rate and is upheld by the 5.3x above; this
+measures the composition of failures, and the two reconcile through the 8.8x
+frequency difference. A situation can be individually safe and still be where most
+losses come from.
+
+What it does bound is headroom. A strategy built only on the double-threat
+feature is aiming at the third of the losses with the highest per-chance payoff,
+and ignoring the two thirds that arrive by volume. Whether that is the right trade
+depends on whether a player can *engineer* double threats often enough to beat
+taking the common case — see `SPEC-rl-player.md`, "Measured against qwen-3-8",
+where it did not.
+
+### A learned move-preference model, and what it says
+
+The "hand-crafted, not learned" decision above was taken explicitly because a
+learned model risked fitting noise "without more data than exists." **That premise
+has changed**, so it is revisited here rather than left standing.
+
+Each record names a chosen move from a fully specified board, and every other
+legal move from that board is one that was rejected — so preference over moves
+*within* a position is learnable by softmax cross-entropy (a conditional logit),
+with no need for the "played this correctly" examples the file does not contain.
+Only move-level features can contribute: a position-level one is constant across
+candidates and cancels. 11 features, 411 train / 177 test positions, 96 candidate
+moves each:
+
+| feature | weight |
+|---|---:|
+| `answers_all` — kills *every* opponent threat line | **-4.81** |
+| `blocks_threat` — threat lines killed | **+3.25** |
+| `creates_threat` — leaves a live threat of its own | **+2.41** |
+| `aligned` — both cells share a row or column | **+1.75** |
+| `advances_own` — lines extended, opponent absent | +1.08 |
+| `creates_split`, `center`, `corner`, `adjacent`, `on_diagonal` | <= ±0.4 |
+
+Held-out top-1 accuracy is **13.6% against a 1.5% chance rate** — a 9x lift — and
+the chosen move lands in the top 10% of candidates on average. Train and test
+agree (15.1%/89.9% against 13.6%/89.5%), so eleven features over 411 positions is
+not overfitting.
+
+The reading: **this model plays offence when it should defend.** It likes blocking
+threats (+3.25) but specifically shuns the move that blocks them *all* (-4.81),
+while favouring moves that build its own lines (+2.41, +1.08). Partial defence,
+as a move preference rather than as a property of the position — which is a
+mechanism the three-level score cannot express, since that score reads the board
+and not the choice.
+
+It also **confirms the alignment habit on real data**: `aligned` at +1.75. §"The
+score, as implemented" asserts a shared row or column is the measured habit, and
+"the only alignment with a lexical cue in the move history an LLM reconstructs the
+board from," on the strength of enriched probes. It now carries a fitted positive
+weight over 588 ordinary-play errors.
+
+`wins_now` fits to exactly 0.000, which is the right sanity check rather than a
+result: no winning move can exist at a `draw->loss` position, so the feature never
+varies and should be dropped.
+
+### What this corpus cannot say
+
+It is **positive-only**. `mistakes.jsonl` records a mistake but neither the
+opponent nor the moves played well, so every rate above needing a denominator
+borrows one from locally generated `rl`-vs-`perfect` games — a proxy, since qwen's
+own play shapes the positions it reaches. Two changes would remove the guesswork:
+record the opponent on each mistake, and optionally log every graded move rather
+than only the bad ones. Both want fresh games, so neither is free.
+
+And a model fitted to blunders alone predicts move choice *given* that something
+went wrong; it will overstate how error-prone the player is in general. It is a
+model of how this player errs, not of how it plays.

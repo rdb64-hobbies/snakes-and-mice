@@ -25,9 +25,12 @@
 > below); and periodically training and evaluating against real LLMs alongside
 > self-play (see "Periodic fine-tuning" below).
 >
-> **Only step 1 of "The loop" is built.** Steps 2–6, which spend live-LLM time, and
-> the comparison the whole player exists to win — does it beat an LLM more often
-> than `perfect` does — remain to be done. Training hyperparameters and curriculum
+> **Only step 1 of "The loop" is built**, and the comparison the whole player
+> exists to win has now been run and **failed**: against `qwen-3-8-rtx` over 160
+> games the trained player wins 6.2% where bare `perfect` wins 8.1% and
+> `perfect-trappiness` 10.0% (see "Measured against qwen-3-8," below). Steps 2–6,
+> which spend live-LLM time, remain to be done and are where any remaining hope
+> lies. Training hyperparameters and curriculum
 > details are settled only to the extent that a working run needed them, and are
 > not claimed to be tuned. The mistake model itself — whether LLM mistakes are
 > exploitable at all, what they look like, and the scoring function's exact form —
@@ -413,15 +416,65 @@ for the reasons the trainer's module docstring records.
 Whether the agent beats an LLM more often than `perfect` does — the Goal, the only
 question the player exists to answer — is unmeasured.
 
+### Measured against qwen-3-8, 2026-10-05: the goal is not met
+
+The Goal above asks for a player that beats an LLM **more often than the perfect
+player does**. Measured at last, 160 games each, both seats, four independent
+repeats, against `qwen-3-8-rtx` served locally by vLLM:
+
+| player | games | W | D | L | win rate |
+|---|---:|---:|---:|---:|---:|
+| `perfect` (bare) | 160 | **13** | 145 | **0** | **8.1%** |
+| `rl` | 160 | **10** | 146 | **4** | **6.2%** |
+| `perfect-trappiness` (2026-09-15, 40 games) | 40 | 4 | 35 | 0 | 10.0% |
+
+**The criterion fails.** The trained player wins less often than bare `perfect`
+*and* loses four games `perfect` never loses. The ordering runs the wrong way
+across all three: trappiness 10% > perfect 8.1% > rl 6.2%. On significance, 10
+against 13 wins at n = 160 is not a wide gap and per-match variance is severe
+(one 20-game match gave `perfect` 7 wins, three others gave it none), so this is
+not evidence that `perfect` is decisively stronger — but there is no hint of the
+RL player being stronger, and the 4 losses are a real one-sided cost.
+
+The premise is intact: qwen is demonstrably fallible, 42 mistakes across the 320
+games. What fails is the exploitation. The mistake records show the trained player
+erring at **14.4% of games against qwen's 13.1%** — about the same rate as the
+opponent it was built to exploit. It threw a drawn position away 19 times; qwen
+converted only 4 of those 19, which is the whole reason its record looks
+respectable. `perfect` would have converted all 19.
+
+**Why, mechanically.** The shaping term rewards creating a *split* threat. Per
+opportunity that is the right target — such positions are ~5.3x more dangerous to
+this model than single-threat ones
+([`SPEC-mistake-model.md`](SPEC-mistake-model.md), "Validation against 588 real
+blunders"). But single threats are 8.8x more common, so **62% of qwen's losing
+blunders are unanswered single threats**, which the shaping term does not reward
+at all. The signal was correctly aimed and incomplete.
+
+**And the bar was understated.** Beating `perfect` against a fallible opponent
+requires converting mistakes at least as well as exact search — which `perfect`
+does by construction, finding every forced win — while *inducing* more of them.
+`perfect-trappiness` already induces with exact trap counting, and beats both. So
+the real target is not "beat perfect play" but "out-induce an exact trap counter,"
+which this document never framed as the bar. Nothing measured suggests a learned
+policy is close to it.
+
+What is not ruled out is the rest of the loop. Steps 2-6 have never been run: the
+agent has never played an LLM in training, and its pool was self-play 58.8%,
+`random` 39.2%, `perfect` 2%. A learned move-preference model fitted to the
+collected blunders (ibid.) predicts qwen's chosen move at 9x the chance rate and
+captures a mechanism the three-level score cannot — that this model plays offence
+when it should defend. Shaping on that, rather than on split threats alone, is the
+untried idea with evidence behind it.
+
 ### What is still open
 
 - **Steps 2–6 of "The loop."** Nothing here spends live-LLM time. The mistake
   model enters training only as the hand-crafted shaping term; no probing,
   densifying, or fitting against a real model has been done.
-- **The comparison the player exists to win.** Whether it beats an LLM more often
-  than `perfect` does is unmeasured. The baselines it will be measured against
-  shipped in 1.8 and the player shipped in 1.10; the measurement is its own piece
-  of work, listed in SPEC.md's to-do.
+- ~~**The comparison the player exists to win.**~~ Measured, and failed — see
+  "Measured against qwen-3-8," above. What remains open is whether steps 2-6 can
+  close the gap, not whether step 1 alone did.
 - **Hyperparameters and curriculum.** Settled only to the extent a working run
   needed them. Nothing above claims a tuned value, and the one genuinely forced
   choice — the opponent mix — was forced by measured cost, not by learning
