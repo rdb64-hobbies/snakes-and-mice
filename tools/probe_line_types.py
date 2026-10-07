@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         assert len(r.threats) == 1, f"{s.name}: expected exactly one threat"
         if not r.legal:
             illegal.append(s)
-            print(f"{s.name:24s} played {r.move}: ILLEGAL -- reoccupied a cell")
+            print(f"{s.name:24s} played {r.move}: ILLEGAL -- {r.illegal_reason}")
             continue
         ok = r.hits[0]
         kind = line_kind(r.threats[0])
@@ -162,7 +162,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{side.value:5s} defending: {'  '.join(parts)}")
     if illegal:
         print(
-            f"({len(illegal)} scenario(s) excluded above -- reoccupied a cell: "
+            f"({len(illegal)} scenario(s) excluded above as illegal: "
             f"{', '.join(s.name for s in illegal)})"
         )
 

@@ -55,7 +55,7 @@ from snakes_and_mice import (
     play_game,
 )
 from snakes_and_mice.roster import ConfigError, PlayerSpec, ProviderSpec, Roster
-from snakes_and_mice.players import LLMPlayer
+from snakes_and_mice.players import LLMPlayer, PerfectPlayer, RandomPlayer
 from snakes_and_mice.players.llm import (
     ANTHROPIC_CACHE_TTL,
     DEFAULT_THINKING,
@@ -1040,3 +1040,31 @@ def test_no_warning_when_the_provider_takes_the_thinking_level(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
     resolve_agent(PlayerSpec(name="opus", provider="anthropic", model="claude-opus-4-8"), {})
     assert capsys.readouterr().err == ""
+
+
+def test_assume_own_move_relays_what_observe_move_withholds() -> None:
+    # `observe_move` returns early for this player's own side, because in a real
+    # game its own move is already in the thread as its structured response. A
+    # *constructed* position has no such response, so the move must be relayed
+    # explicitly or the model is told nothing about its own pieces.
+    player: LLMPlayer = LLMPlayer(_scripted([_move(["C3", "D4"], "in_play")]))
+    player.start_game(Side.MOUSE, Cell.from_label("B3"))
+    player.observe_move(Side.MOUSE, Move.from_labels("A1", "A2"))
+    assert not any("A1" in line for line in player._pending[1:])
+
+    player.assume_own_move(Side.MOUSE, Move.from_labels("A1", "A2"))
+    relayed = player._pending[-1]
+    assert "A1" in relayed and "A2" in relayed and "mouse" in relayed
+
+
+def test_assume_own_move_defaults_to_observing_for_mechanical_players() -> None:
+    # Every player that rebuilds the board from what it is told, whoever moved,
+    # wants the base-class default — so a replayed position reaches it correctly
+    # with no override. (`ScriptedPlayer` is excluded deliberately: it replays a
+    # fixed sequence and tracks no board, so it has nothing to observe.)
+    for player in (RandomPlayer(), PerfectPlayer()):
+        player.start_game(Side.MOUSE, Cell.from_label("B3"))
+        player.assume_own_move(Side.MOUSE, Move.from_labels("A1", "A2"))
+        board = player._board
+        assert board.occupant(Cell.from_label("A1")) is Side.MOUSE
+        assert board.occupant(Cell.from_label("A2")) is Side.MOUSE

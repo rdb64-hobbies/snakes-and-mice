@@ -26,8 +26,12 @@
 > variant (see "The mistake model" below) — and where cross-model testing of
 > that feature currently stands: replicated on 2 of 3 models tried, at a
 > smaller and noisier magnitude than first measured, with one model showing no
-> effect so far; and a second, not-yet-decisive lead (recency of placement)
-> found while testing that (see "Generalizing across models" below).
+> effect so far.
+> **Note, 2026-10-07:** every constructed-position probe in this document ran with
+> the defender unable to see its own pieces, a harness defect now fixed. It
+> retracted the second lead entirely (recency of placement) and left the
+> double-threat feature resting on real-game evidence instead of on the probes
+> that found it — see "The replay harness withheld the defender's own pieces".
 > **The score itself exists as of 1.8** — the `mistake_model` module, three
 > levels over one feature (see "The score, as implemented" below) — along with
 > the third of its roles, `perfect-mistake-model`; the other two wait on the RL
@@ -224,6 +228,14 @@ competing for attention when a threat appears**, not at which of the 12 lines it
 happens to sit on. The mistake model (below) is revised accordingly.
 
 ## A second lever: simultaneous threats
+
+> **Re-measured 2026-10-07 and much weaker than this section reports.** The probe
+> below ran with the defender unable to see its own pieces; re-run correctly it
+> gives 8/8 single against 7/8 double, not 4/4 against 2/4. The feature survives
+> on *real-game* evidence instead (§"Validation against 588 real blunders": 5.3x
+> worse per opportunity over 588 blunders), not on what follows. Read this section
+> as the history of how the feature was found, and "The replay harness withheld
+> the defender's own pieces" for what it is actually worth.
 
 The training strategy in [`SPEC-rl-player.md`](SPEC-rl-player.md) assumes
 creating one three-piece live line is something a policy could learn to reach
@@ -439,6 +451,10 @@ inherits that decision; it is out of scope while the list has one entry.
 
 ### The double-threat effect replicates on 2 of 3 models, at a smaller and noisier magnitude than first measured
 
+> **Measured through the defective harness** (see "The replay harness withheld the
+> defender's own pieces," 2026-10-07) and not since re-run. Treat every number
+> below as unverified.
+
 The initial 4-pair probe (n=3–4 per condition, after excluding illegal
 responses) found degradation only on `qwen-3-8-rtx`; `gpt-5-6-terra` and
 `gemini-3-8` looked clean. Given how rare real mistakes are (above), that was
@@ -504,9 +520,15 @@ positions found by accident. Full tally across every model tested:
 | Early (first move) | 10 | 6 |
 | Late (last move) | 6 | 0 |
 
-Six of ten early placements were forgotten; zero of six late ones were. That
-is a real, substantial gap, not a coincidence of the two positions where it
-was first noticed. Three qualifications keep it from being cleaner than it is:
+Six of ten early placements were forgotten; zero of six late ones were.
+
+**Retracted, 2026-10-07.** This was a harness defect, not a recency effect: the
+replay never relayed the defender's own moves at all, so those cells were not the
+oldest fact in the history but absent from it. Re-run with the board actually
+relayed, every one of them is correctly avoided — see "The replay harness withheld
+the defender's own pieces," below. The qualifications that follow were written
+when the effect was believed real; they are kept because the counter-examples
+among them now read as the signal rather than the noise:
 
 - **Only two of the three models tested ever showed it.** `gpt-5-6-terra`
   (3 of 3 early instances forgotten) and `qwen-3-8-rtx` (3 of 5) account for
@@ -525,21 +547,105 @@ was first noticed. Three qualifications keep it from being cleaner than it is:
   tracked whether placed early or late. Recency did not reproduce on demand for
   these cells the way it did for the three found by accident.
 
-### Status: a real lead, not yet a feature
+### The replay harness withheld the defender's own pieces, 2026-10-07
 
-Recency of placement is not added to "Candidate features," above. The evidence
-is substantial in volume but mixed in a way the double-threat feature's evidence
-was not: that feature degraded cleanly and predictably across every matched
-pair tried (§"A second lever"); this one degrades on some cells and models and
-not others, for reasons not yet identified — what makes `A1`, `B4`, `C4`, and
-`A4` forgettable but not the two cells picked for the fresh pairs is an open
-question, not a settled mechanism. Promoting it would mean scoring positions on
-a pattern that is still, honestly, "happens often but not reliably, on cells
-that are hard to characterize in advance." Worth continuing to probe — a
-promising next step would be varying board position or line role of the target
-cell rather than only its recency — but it stays a documented lead, not a
-scored feature, until it can predict which cells get forgotten rather than only
-explain the ones that already were.
+**Every probe above was run with the defender unable to see its own pieces.**
+`tools/threat_scenarios.py` built each position by replaying the move sequence
+through `start_game` / `observe_move`, which SPEC-rl-player.md's step 3 states is
+all a `Player` needs. That holds for every mechanical player. It is false for the
+LLM player, whose `observe_move` **returns early for its own side** — in a real
+game its own moves are already in the thread as its own structured responses, so
+relaying them would duplicate them. In a constructed position it never made
+those moves, so they existed nowhere.
+
+Verified directly by replaying `mouse-defends-single-row` and reading the prompt.
+The defender owns A2, B4, D3 and D4; the entire board information it received was:
+
+    A new game begins. You are playing mouse. The snake is seeded at C3.
+    Your opponent (snake) played B2 C1.
+    Your opponent (snake) played C2 E1.
+
+The preamble even tells the model to track the board "from the seeded snake,
+**your own moves**, and your opponent's" — and its own moves were never said.
+
+Fixed by `Player.assume_own_move(side, move)`, a new optional hook (SPEC.md §3
+allows these): the default delegates to `observe_move`, which is right for every
+player that rebuilds the board from what it is told, and the LLM player overrides
+it to relay "You (mouse) played A2 B4." The relay is a user message where a real
+game carries the move as the model's own response — the same information, a
+different form, so a probe is now *close* to real conditions rather than
+identical to them.
+
+#### What the re-runs say
+
+All three probes re-run against `qwen-3-8-rtx` with the board fully relayed.
+**Zero illegal moves across all 31 scenarios**, against five reoccupations in the
+prior data.
+
+**Recency of placement was an artifact.** Each of qwen's three recorded
+reoccupations is now clean, same scenario, same cell: `mouse-defends-row-A` (was
+C4), `snake-defends-row-D` (was A4), `snake-defends-single-row` (was B4).
+`probe_recency.py` returns 6 of 6 cells correctly avoided, both early conditions
+included, against a prior 6 of 10 early placements "forgotten". The cells were
+never old-and-forgotten; they were absent. The finding is retracted below.
+
+**The double-threat effect largely vanished from the probe.**
+
+| | before (broken harness) | re-run |
+|---|---|---|
+| single threat | 4/4 defended | **8/8** |
+| double threat | **2/4** defended | **7/8** |
+
+A 50-point gap became 12.5 points — one miss in eight. The reason the fix mattered
+here is not that the threats were hidden (the *attacker's* moves were always
+relayed) but that covering two threats requires finding two *legal* cells, and
+half the board was invisible. Failing was close to unavoidable.
+
+**Single-threat defence**: 8/8 in `probe_multi_threats`, 10/12 in
+`probe_line_types` (misses on `mouse-defends-row-E` and
+`snake-defends-main-diag`), so 18 of 20 overall. Note these probes take **one
+sample per scenario** at the server's default temperature, so 10/12 against the
+old 12/12 is well within stochastic variation and is not evidence the fix made
+defence worse.
+
+`snake-defends-main-diag` returned a **one-piece move**, which a real game would
+lose on as `WRONG_PIECE_COUNT` but which `Response.legal` scored as a plain miss,
+since it only tested reoccupation. A piece-count check was added at the same time.
+
+#### What survives
+
+The double-threat feature does, but **on real-game evidence rather than on the
+probe that motivated it**. §"Validation against 588 real blunders" measured it
+from ordinary play, never touching this harness: `SCORE_SPLIT` positions are 2.0%
+of strong-play positions and 33.8% of real losses, a per-opportunity failure rate
+**5.3x** worse than single threats. 588 real errors outweigh eight constructed
+pairs, and the shipped `mistake_model` score keeps its justification.
+
+What does not survive is the probe evidence as *independent* support. Anything in
+this document resting on a `threat_scenarios` run before 2026-10-07 — including
+the cross-model replication in §"The double-threat effect replicates on 2 of 3
+models" — was measured under the same defect and should be re-run before being
+relied on.
+
+### Status: retracted — it was the harness, not the model
+
+Recency of placement is **not a finding about the model at all.** It was the
+replay harness withholding the defender's own pieces, so the "forgotten" cells
+were never in the history to be forgotten (see "The replay harness withheld the
+defender's own pieces," below). With the board relayed, all of them are avoided.
+It is not a candidate feature and should not be probed further on this basis.
+
+The reasoning that kept it out of "Candidate features" is worth preserving,
+because it was pointing at the answer. The objection recorded here was that the
+effect "degrades on some cells and models and not others, for reasons not yet
+identified — what makes `A1`, `B4`, `C4`, and `A4` forgettable but not the two
+cells picked for the fresh pairs is an open question, not a settled mechanism."
+That question had an answer: the forgettable cells were the ones a *constructed*
+scenario had assigned to the defender, and the fresh pairs' cells were avoided
+because the model never played near them rather than because it tracked them. A
+pattern that cannot predict which cells get forgotten, only explain the ones that
+already were, is the signature of an artifact — and declining to promote it on
+exactly that ground is what kept it out of the shipped score.
 
 ## Validation against 588 real blunders, 2026-10-05
 

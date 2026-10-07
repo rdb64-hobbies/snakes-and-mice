@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> None:
         kind = "single" if len(r.threats) == 1 else "double"
         if not r.legal:
             illegal.append(s)
-            print(f"{s.name:30s} [{kind}] played {r.move}: ILLEGAL -- reoccupied a cell")
+            print(f"{s.name:30s} [{kind}] played {r.move}: ILLEGAL -- {r.illegal_reason}")
             continue
         ok = all(r.hits)
         results.append((s, ok))
@@ -204,7 +204,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     if illegal:
         print(
-            f"({len(illegal)} scenario(s) excluded above -- reoccupied a cell: "
+            f"({len(illegal)} scenario(s) excluded above as illegal: "
             f"{', '.join(s.name for s in illegal)})"
         )
 

@@ -46,6 +46,22 @@ class Player(ABC):
         move can be produced (recorded as a ``PLAYER_FAULT``).
         """
 
+    def assume_own_move(self, side: Side, move: Move) -> None:
+        """Observe a move attributed to **this** player that it did not choose.
+
+        Only used to *construct* a position — replaying a move sequence to reach
+        some board of interest and then taking a single :meth:`choose_move`
+        (SPEC-rl-player.md, "The loop", step 3). It never fires during a real
+        game, where every own move came from ``choose_move`` already.
+
+        The default delegates to :meth:`observe_move`, which is right for any
+        player that rebuilds the board purely from what it is told, whoever
+        moved — every mechanical player here. A player that instead infers its
+        own moves from its own past output must override this, or a constructed
+        position will be missing all of its own pieces.
+        """
+        self.observe_move(side, move)
+
     def end_game(self, result: GameResult) -> None:
         """Be told how the game ended. Default: do nothing."""
         return None

@@ -3,11 +3,18 @@
 Shared by the `probe_*` scripts in this directory: each constructs a `Scenario`
 (a target occupancy, a seed, and which side is on move to defend), replays a
 legal move sequence into a live `Player` to reach it (the "densifying"
-technique from SPEC-rl-player.md's training strategy — a `Player` only ever
-learns the board through `start_game` / `observe_move`, so any reachable
-position can be set up directly, no real game needed), takes exactly one
+technique from SPEC-rl-player.md's training strategy), takes exactly one
 `choose_move()`, and checks whether the response touches every line the
 defender needed to attend to.
+
+The replay relays the *opponent's* moves with `observe_move` and the defender's
+own with `assume_own_move`. That distinction is load-bearing and was missing
+until 2026-10-07: the LLM player learns its own moves by having emitted them and
+`observe_move` returns early for them, so every scenario before the fix reached
+the model with all of its own pieces invisible. Five recorded "reoccupied a
+filled cell" failures, and the recency-of-placement lead drawn from them, came
+from that (SPEC-mistake-model.md, "The replay harness withheld the defender's
+own pieces").
 
 A `Scenario` is validated before it is ever sent to a model (`validate`): the
 *only* live three-or-more-piece lines are the intended threats — the defender
@@ -154,13 +161,17 @@ class Response:
     and an illegal move's *other* cell may still be informative), but a caller
     should report `legal is False` distinctly rather than folding it into a
     hit/miss tally: a "hit" earned by luck on the one real cell of an otherwise
-    illegal move is not the same finding as a clean defense.
+    illegal move is not the same finding as a clean defense. `illegal_reason`
+    says which way it was illegal — a reoccupied cell, or the wrong number of
+    pieces, the second added 2026-10-07 after a probe scored a one-piece move as
+    a plain miss.
     """
 
     move: Move
     threats: list[frozenset[str]]
     legal: bool
     hits: list[bool]
+    illegal_reason: str | None = None
 
 
 def run(player: Player, s: Scenario) -> Response:
@@ -174,8 +185,30 @@ def run(player: Player, s: Scenario) -> Response:
     )
     for side, labels in sequence:
         move = Move.of(*(Cell.from_label(label) for label in labels))
-        player.observe_move(side, move)
+        # The defender's own moves need `assume_own_move`, not `observe_move`:
+        # a player that learns its own moves by having emitted them (the LLM
+        # player) is told nothing by the latter, and reached this position with
+        # every one of its own pieces invisible. Measured 2026-10-07; see
+        # SPEC-mistake-model.md, "The replay harness withheld the defender's
+        # own pieces".
+        if side is s.defender:
+            player.assume_own_move(side, move)
+        else:
+            player.observe_move(side, move)
     choice = player.choose_move()
     played: frozenset[str] = frozenset(c.label for c in choice.move.cells)
-    legal = not (played & occupied)
-    return Response(choice.move, threats, legal, [bool(t & played) for t in threats])
+    reason: str | None = None
+    reoccupied = sorted(played & occupied)
+    if reoccupied:
+        reason = f"reoccupied {', '.join(reoccupied)}"
+    elif len(choice.move.cells) != 2:
+        # One piece is legal only when it ends the game (SPEC.md §2.5), and
+        # `validate` has already ruled that out: the defender holds no winning
+        # line, and a cat's game needs all 12 lines dead, which a scenario this
+        # sparse cannot reach. So in these positions a lone piece is a
+        # WRONG_PIECE_COUNT fault, which a real game would lose on.
+        reason = f"placed {len(choice.move.cells)} piece(s), not two"
+    return Response(
+        choice.move, threats, reason is None,
+        [bool(t & played) for t in threats], reason,
+    )

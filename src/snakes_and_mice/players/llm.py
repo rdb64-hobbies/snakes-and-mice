@@ -433,6 +433,23 @@ class LLMPlayer(Player):
             return
         self._pending.append(f"Your opponent ({side.value}) played {move}.")
 
+    def assume_own_move(self, side: Side, move: Move) -> None:
+        """Relay a move this player is to treat as its own but never produced.
+
+        The base class's default — delegate to :meth:`observe_move` — is wrong
+        here precisely because of the early return above: this player learns its
+        own moves by having emitted them, so a replayed position reaches it with
+        every one of its own pieces missing. The preamble tells the model to track
+        the board "from the seeded snake, your own moves, and your opponent's", and
+        in a constructed position its own moves exist nowhere unless said.
+
+        The relay is a user message, where a real game would carry the move as the
+        model's own structured response. The information is the same and the form
+        is not, so a probe built on this is close to a real game's conditions
+        rather than identical to them.
+        """
+        self._pending.append(f"You ({side.value}) played {move}.")
+
     def choose_move(self) -> MoveChoice:
         assert self._side is not None, "choose_move called before start_game"
         self._pending.append(
