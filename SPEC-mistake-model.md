@@ -643,4 +643,19 @@ than only the bad ones. Both want fresh games, so neither is free.
 
 And a model fitted to blunders alone predicts move choice *given* that something
 went wrong; it will overstate how error-prone the player is in general. It is a
-model of how this player errs, not of how it plays.
+model of how this player errs, not of how it plays. That bias is not theoretical:
+used as a shaping potential it fires at 34% of ordinary positions against the
+three-level score's 2%.
+
+### Used as a shaping term: no measured gain
+
+The obvious consumer is `SPEC-rl-player.md`'s shaping potential, and it was
+tried — see that document, "Shaping on move preference instead". Over 720 games
+against `qwen-3-8-rtx` a policy trained on it wins 8.06% ±1.01 where bare
+`perfect` wins 8.12% ±2.16: a dead heat, 0.03 standard errors apart. The model
+predicts the target's choices well (9x chance) and that did not convert into
+wins.
+
+This does not retract anything above. The feature findings are measurements of
+how the target errs and stand on their own; what fails is the inference that
+predicting errors well is enough to exploit them better than exact search does.

@@ -43,6 +43,7 @@ noise, not bias.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import torch
@@ -50,7 +51,7 @@ from torch import Tensor
 
 from snakes_and_mice.board import Board
 from snakes_and_mice.core import Cell, Move, MoveChoice, Side
-from snakes_and_mice.mistake_model import threat_score
+from snakes_and_mice.mistake_model import blunder_probability, threat_score
 from snakes_and_mice.players.base import Player
 from snakes_and_mice.players.rl_net import (
     CELLS_BY_INDEX,
@@ -63,6 +64,42 @@ from snakes_and_mice.players.rl_net import (
     own_masks,
 )
 from snakes_and_mice.result import GameResult, Termination
+
+Potential = Callable[[int, int], float]
+"""A shaping potential: ``(ours_after_our_move, theirs) -> value``, on the same
+0–2 scale whichever form is used, so :data:`DEFAULT_SHAPING_WEIGHT` means the
+same thing for both."""
+
+
+def split_threat_potential(ours: int, theirs: int) -> float:
+    """The 1.10 term: the mistake model's three-level position score.
+
+    Rates every single-threat position 0 — which is 62.4% of the target's real
+    blunders (SPEC-mistake-model.md, "Validation against 588 real blunders").
+    """
+    return float(threat_score(ours, theirs))
+
+
+def preference_potential(ours: int, theirs: int) -> float:
+    """The predicted chance the opponent fails to answer, times 2 for scale.
+
+    Covers the single-threat case the score above cannot: answers exist, but the
+    fitted model of the target's choices says it may well not play one. Measured
+    against :func:`split_threat_potential`, it is far more *sensitive* (mean
+    0.96 against 0.36 at real blunder positions, on this scale 1.93 against
+    0.71) and much less *specific* (non-zero at 34% of ordinary positions
+    against 2%) — the fitted weights come from blunders only, with no example of
+    the target playing well, so they over-predict failure. Which way that trades
+    is what a run with each is for.
+    """
+    return 2.0 * blunder_probability(ours, theirs)
+
+
+POTENTIALS: dict[str, Potential] = {
+    "threat-score": split_threat_potential,
+    "move-preference": preference_potential,
+}
+"""Selectable shaping potentials, by the trainer's ``--shaping`` name."""
 
 DEFAULT_SHAPING_WEIGHT: float = 0.05
 """How much one level of the mistake model's score is worth, next to a ±1 result.
@@ -90,7 +127,7 @@ class Step:
     second_cell: int | None
     log_prob: float
     value: float
-    potential: int
+    potential: float
     reward: float = 0.0
     advantage: float = 0.0
     target: float = 0.0
@@ -119,11 +156,13 @@ class RecordingPlayer(Player):
         rng: random.Random,
         name: str = "rl-learner",
         shaping_weight: float = DEFAULT_SHAPING_WEIGHT,
+        potential: Potential = split_threat_potential,
     ) -> None:
         super().__init__(name)
         self._net: PolicyValueNet = net
         self._rng: random.Random = rng
         self._weight: float = shaping_weight
+        self._potential: Potential = potential
         self._board: Board = Board()
         self._side: Side | None = None
         self.episode: Episode = Episode()
@@ -162,8 +201,8 @@ class RecordingPlayer(Player):
                 log_prob=log_prob,
                 value=value,
                 # Scored on the position our move leaves behind, with the
-                # opponent to move — the frame `threat_score` is defined in.
-                potential=threat_score(after, theirs),
+                # opponent to move — the frame both potentials are defined in.
+                potential=self._potential(after, theirs),
             )
         )
         cells: list[Cell] = [CELLS_BY_INDEX[first]]
@@ -220,7 +259,7 @@ def _assign_rewards(episode: Episode, weight: float) -> None:
     game's outcome and ``−weight · potential[last]``, so the shaping terms of a
     complete episode cancel exactly.
     """
-    previous: int = 0
+    previous: float = 0.0
     for step in episode.steps:
         step.reward = weight * (step.potential - previous)
         previous = step.potential

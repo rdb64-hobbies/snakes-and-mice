@@ -459,6 +459,66 @@ the real target is not "beat perfect play" but "out-induce an exact trap counter
 which this document never framed as the bar. Nothing measured suggests a learned
 policy is close to it.
 
+### Shaping on move preference instead: also a null result, 2026-10-07
+
+The gap identified above — that the shaping term rewards split threats while 62%
+of the target's losses are unanswered *single* threats — was acted on. `rollout`
+gained a second potential, selected by `train.py --shaping`:
+
+**Φ(s′) = 2 · P(the opponent fails to answer our live threats)**, using the
+fitted move-preference model
+([`SPEC-mistake-model.md`](SPEC-mistake-model.md), "A learned move-preference
+model"). A reply counts as an answer when it kills every live threat, which is
+bit arithmetic, so this costs 0.31 ms and needs no search — asking `evaluate()`
+per reply would have cost ~120 search calls a step and been unaffordable.
+
+It is far more *sensitive* than the three-level score (mean 0.96 against 0.36 at
+the 588 real blunder positions) and much less *specific* (non-zero at 34% of
+ordinary positions against 2%), the fitted weights coming from blunders only with
+no example of the target playing well.
+
+A controlled run — identical to the shipped checkpoint's configuration, same
+label file, `--perfect-share 0.02`, same seed, 8-hour budget, 3,047 iterations
+against its 3,100, **only the shaping differing** — produced
+`rl-models/rl-move-pref.pt`. Measured against `qwen-3-8-rtx`:
+
+| arm | games | W | D | L | win rate | loss rate |
+|---|---:|---:|---:|---:|---:|---:|
+| `rl-move-pref` | **720** | 58 | 617 | 22 | **8.06% ±1.01** | 3.06% |
+| `perfect` (bare) | 160 | 13 | 145 | 0 | 8.12% ±2.16 | **0%** |
+| `rl` (threat-score) | 160 | 10 | 146 | 4 | 6.25% ±1.91 | 2.50% |
+
+**A dead heat: −0.07% ± 2.39%, or 0.03 standard errors.** The criterion is still
+not met, now on 720 games rather than 160, and `perfect` remains better on losses
+by having none. The nominal 1.8% gain over the threat-score term is also inside
+the noise (0.8 SE) and is not claimed.
+
+**A warning about sample size, recorded because it nearly became a false
+entry here.** The first 160 of those games gave 17 W — a 10.62% rate, above
+`perfect`, which read as the criterion being met. It sat 2.4 SE above where 720
+games put the true rate. The gap over `perfect` was 0.8 SE at the time and was
+not written up on that basis; the next 560 games returned 7.32%. **Do not
+conclude anything about this comparison from a few hundred games.** Opening
+difficulty is the dominant variance, which is what `tools/paired_llm_eval.py`
+exists to remove: it plays every arm over the identical 25 seeds in both seats,
+so that variance cancels between arms instead of adding to the spread.
+
+Robustness did not pay for any of it. On an identical balanced schedule of 100
+games each, `rl-move-pref` lost 6% to bare `perfect` and 10% to
+`perfect-trappiness`, against the shipped checkpoint's 3% and 12% — differences
+inside this measurement's noise either way.
+
+`rl-models/rl.pt` therefore remains the shipped player. `rl-move-pref.pt` is kept
+beside it only so the 720-game figure above stays reproducible; nothing loads it
+unless `SNAKES_AND_MICE_RL_MODEL` names it.
+
+**What three attempts now say together.** Exact trap counting
+(`perfect-trappiness`), a hand-coded bias score (`perfect-mistake-model`,
+`threat-score` shaping) and a fitted move-preference model all land in the same
+6–10% band against this target. The target hands out roughly 8% winnable games
+to any competent opponent, and *converting more of them than exact search does*
+is the part none of these has moved.
+
 What is not ruled out is the rest of the loop. Steps 2-6 have never been run: the
 agent has never played an LLM in training, and its pool was self-play 58.8%,
 `random` 39.2%, `perfect` 2%. A learned move-preference model fitted to the

@@ -1133,7 +1133,8 @@ Rough module layout:
   logging"), the tie-break benchmark (§10, "Choosing among
   optimal moves"), the RL trainer (`tools/rl/`, specified in `SPEC-rl-player.md`),
   the move-preference fit (`fit_move_preference.py`, specified in
-  `SPEC-mistake-model.md`),
+  `SPEC-mistake-model.md`), the seed-paired LLM comparison
+  (`paired_llm_eval.py`, specified in `SPEC-rl-player.md`),
   and the offline solver, which has its own document
   (`tools/solver/SPEC.md`). They import the package but nothing in
   the package imports them, so a tool may take dependencies the engine does not have.
@@ -1335,6 +1336,10 @@ Next up, in no particular order — each already specified in full elsewhere:
   Step 4 has a running start: `tools/fit_move_preference.py` fits a move-preference
   model to the 588 blunders already on disk and predicts the target's chosen move
   at 9× the chance rate, capturing a failure mode the hand-coded score cannot
-  express (`SPEC-mistake-model.md`, "Validation against 588 real blunders").
+  express (`SPEC-mistake-model.md`, "Validation against 588 real blunders"). Using
+  it as the shaping term has been tried and measured flat over 720 games
+  (`SPEC-rl-player.md`, "Shaping on move preference instead"), so what remains
+  untried is the parts that spend live-LLM time: probing and densifying, rather
+  than re-deriving the model from blunders already recorded.
 - **Tournament vs. frontier and large open-weight hosted models.** Run the
   hosted-API leg of the benchmark (`RESULTS.md`, §2 "Frontier LLMs").

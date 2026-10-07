@@ -107,7 +107,15 @@ from snakes_and_mice.players.rl_net import (
     save_checkpoint,
 )
 from snakes_and_mice.result import GameResult, Termination
-from rollout import DEFAULT_SHAPING_WEIGHT, Episode, RecordingPlayer, Step, finish
+from rollout import (
+    DEFAULT_SHAPING_WEIGHT,
+    POTENTIALS,
+    Episode,
+    Potential,
+    RecordingPlayer,
+    Step,
+    finish,
+)
 from solved import (
     DEFAULT_PATH as SOLVED_PATH,
     DEFAULT_POSITIONS as SOLVED_POSITIONS,
@@ -205,6 +213,7 @@ class Settings:
     pretrain_epochs: int = 20
     gae_lambda: float = 0.95
     shaping_weight: float = DEFAULT_SHAPING_WEIGHT
+    shaping: str = "threat-score"
     max_grad_norm: float = 0.5
 
 
@@ -245,10 +254,14 @@ def collect(
     for _ in range(settings.games_per_iteration):
         kind: str = rng.choices(kinds, weights=weights)[0]
         seed: Cell = rng.choice(ALL_SEEDS)
-        learner = RecordingPlayer(net, rng, shaping_weight=settings.shaping_weight)
+        potential: Potential = POTENTIALS[settings.shaping]
+        learner = RecordingPlayer(
+            net, rng, shaping_weight=settings.shaping_weight, potential=potential
+        )
         if kind == SELF_PLAY:
             other = RecordingPlayer(
-                net, rng, name="rl-learner-2", shaping_weight=settings.shaping_weight
+                net, rng, name="rl-learner-2",
+                shaping_weight=settings.shaping_weight, potential=potential,
             )
             play_game(learner, other, seed=seed)
             episodes.extend((learner.episode, other.episode))
@@ -566,6 +579,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--time-budget", type=float, default=0.0, metavar="SECONDS",
                         help="stop after this much wall clock (0: no limit)")
     parser.add_argument(
+        "--shaping", choices=sorted(POTENTIALS), default=Settings.shaping,
+        help=f"which shaping potential to use (default: {Settings.shaping}); "
+             f"'move-preference' scores how likely the modelled opponent is to "
+             f"fail to answer, covering single threats the three-level score rates 0",
+    )
+    parser.add_argument(
         "--threads", type=int, default=TORCH_THREADS, metavar="N",
         help=f"CPU threads for torch (default: {TORCH_THREADS}); this network is "
              f"small enough that more threads cost more than they save",
@@ -576,6 +595,7 @@ def main(argv: list[str] | None = None) -> None:
         iterations=args.iterations,
         games_per_iteration=args.games_per_iteration,
         pretrain_epochs=args.pretrain_epochs,
+        shaping=args.shaping,
     )
     if args.threads > 0:
         torch.set_num_threads(args.threads)
