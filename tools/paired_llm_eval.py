@@ -1,16 +1,24 @@
 """Compare several players against one LLM over an identical set of openings.
 
-`play-match --seed random` draws its opening per game, and seed difficulty is the
-dominant noise source in these measurements: the same RL checkpoint scored 4, 5,
-12 and 11 losses per 100 games against `perfect` on nothing but the draw
-(`SPEC-rl-player.md`, "What the first trained agent actually does"). Comparing
-two players across independent random draws therefore spends most of its games
-measuring which openings each happened to get.
+Every arm plays **the same 25 seeds, in both seats**, so whatever difficulty an
+opening carries cancels between arms instead of adding to the spread, and the
+comparison to make is the per-unit difference rather than two marginal rates
+(`tally_paired_eval.py`).
 
-This pairs instead. Every arm plays **the same 25 seeds, in both seats**, so
-opening difficulty cancels between arms rather than adding to the spread. The
-same number of LLM games buys a far tighter comparison, which matters when each
-one costs wall-clock seconds.
+**How much that is worth: very little, measured.** This was built on the belief
+that opening difficulty was the dominant noise source, citing one RL checkpoint
+scoring 4, 5, 12 and 11 losses per 100 games against `perfect`. That reasoning
+was wrong. Those six samples have an SD of 3.44 where plain binomial noise at
+the observed rate already predicts 2.76 — nearly all of the spread was ordinary
+sampling variance, with little left for seeds to explain. On the first real run
+(150 games, three `perfect` variants) the paired standard error came out 0.0665
+against an unpaired 0.0670, and *worse* than unpaired on another of the three
+comparisons.
+
+So pairing is kept because it is free and cannot hurt a comparison, not because
+it substitutes for sample size. The honest fix for noise here is more games:
+separating a 6-point difference at two standard errors needs ~250 games an arm,
+which no design trick avoids.
 
 Output is **one JSON line per game**, so any aggregation is possible afterwards
 and a crash mid-run loses nothing already played. Each line records the arm, the

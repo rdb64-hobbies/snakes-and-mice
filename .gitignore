@@ -49,6 +49,9 @@ rl-models/solved-values*.jsonl
 mistakes.jsonl
 mistakes-*.jsonl
 
+# Paired LLM comparisons (tools/paired_llm_eval.py), accumulated locally too
+paired-eval*.jsonl
+
 # OS / editor cruft
 .DS_Store
 *.swp

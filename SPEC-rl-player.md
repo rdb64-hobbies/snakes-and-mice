@@ -498,10 +498,14 @@ entry here.** The first 160 of those games gave 17 W — a 10.62% rate, above
 `perfect`, which read as the criterion being met. It sat 2.4 SE above where 720
 games put the true rate. The gap over `perfect` was 0.8 SE at the time and was
 not written up on that basis; the next 560 games returned 7.32%. **Do not
-conclude anything about this comparison from a few hundred games.** Opening
-difficulty is the dominant variance, which is what `tools/paired_llm_eval.py`
-exists to remove: it plays every arm over the identical 25 seeds in both seats,
-so that variance cancels between arms instead of adding to the spread.
+conclude anything about this comparison from a few hundred games.** The variance
+is mostly ordinary binomial noise, not an artifact to be designed away: six
+100-game samples of one checkpoint against `perfect` have an SD of 3.44 where
+binomial noise alone predicts 2.76. `tools/paired_llm_eval.py` plays every arm
+over the identical 25 seeds in both seats, which cannot hurt and costs nothing,
+but measured only ~1% tighter than unpaired on its first run — it is not a
+substitute for games. Separating a 6-point difference at two standard errors
+takes ~250 games an arm.
 
 Robustness did not pay for any of it. On an identical balanced schedule of 100
 games each, `rl-move-pref` lost 6% to bare `perfect` and 10% to
