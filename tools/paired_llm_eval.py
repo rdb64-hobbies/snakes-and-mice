@@ -35,11 +35,19 @@ An ``--arm`` is either a built-in name (`perfect`, `perfect-trappiness`,
 two checkpoints can be compared in one run without juggling
 ``SNAKES_AND_MICE_RL_MODEL``.
 
-A fresh LLM player is built per arm and seat, matching how the existing
-`play-match` data was collected (one instance per match, its message thread
-growing across that match's games) so the numbers stay comparable with it.
-Arms within a seat run back to back, keeping them close in time in case the
-endpoint's behaviour drifts over a long run.
+Games are played in **balanced passes** — every arm, every seed, both seats —
+so a run interrupted after hours still yields a fair comparison rather than
+starving whichever arms the loop had not reached yet. The first attempt at this
+ordered seat-outer and arm-inner, and a run that stopped 63 games in had given
+all of them to one arm in one seat.
+
+A fresh LLM player is built every ``--games-per-thread`` games per arm and seat,
+default 20 to match how the baseline data was collected (`play-match --games
+20`). This matters for more than comparability: the message thread grows with
+every game an instance plays, so one instance spanning a whole run would both
+face a history no baseline ever did and eventually exceed the model's context —
+the likely cause of that same 63-game stop, which came after ~378 turns against
+the baseline's ~120.
 """
 
 from __future__ import annotations
@@ -72,6 +80,19 @@ TIE_BREAKS: Final[dict[str, TieBreak]] = {
     "perfect-trappiness": TieBreak.TRAPPINESS,
     "perfect-mistake-model": TieBreak.MISTAKE_MODEL,
 }
+
+
+@dataclass
+class Thread:
+    """One LLM instance and how many games it has served.
+
+    Tracked so a fresh one replaces it every ``--games-per-thread`` games: the
+    message thread grows with each game, and an unbounded one diverges from the
+    baseline's conditions and eventually overruns the model's context.
+    """
+
+    player: Player
+    games: int = 0
 
 
 @dataclass(frozen=True)
@@ -127,6 +148,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--games-per-seed", type=int, default=1, metavar="N",
                         help="games per seed per seat (default: 1, so 50 per arm)")
     parser.add_argument("--out", type=Path, default=Path("paired-eval.jsonl"))
+    parser.add_argument(
+        "--games-per-thread", type=int, default=20, metavar="N",
+        help="games before a fresh LLM instance is built, per arm and seat "
+             "(default: 20, matching `play-match --games 20`, which is how "
+             "the baseline data was collected)",
+    )
     parser.add_argument("--rng-seed", type=int, default=0)
     args: argparse.Namespace = parser.parse_args(argv)
 
@@ -145,25 +172,52 @@ def main(argv: list[str] | None = None) -> None:
                      f"{', '.join(roster.players)}")
 
     per_arm: int = len(ALL_SEEDS) * 2 * args.games_per_seed
-    print(f"{len(arms)} arms x {per_arm} games = "
-          f"{len(arms) * per_arm} games against {args.opponent}", file=sys.stderr)
+    total: int = len(arms) * per_arm
+    print(f"{len(arms)} arms x {per_arm} games = {total} games against "
+          f"{args.opponent}, in {args.games_per_seed} balanced pass(es)",
+          file=sys.stderr)
 
     rng = random.Random(args.rng_seed)
+    # Arm players are built once per seat and reused: no player here carries
+    # state across games (`perfect` clears its table, `rl` holds none), so this
+    # only avoids rebuilding them.
+    players: dict[tuple[str, Side], Player] = {
+        (arm.label, seat): arm.build(rng)
+        for seat in (Side.MOUSE, Side.SNAKE)
+        for arm in arms
+    }
+    # LLM threads, with the count of games each has served. A fresh instance
+    # every `--games-per-thread` games: the thread grows with every game it
+    # plays, and an unbounded one both diverges from how the baseline data was
+    # collected and eventually exceeds the model's context.
+    threads: dict[tuple[str, Side], Thread] = {}
+
+    def opponent_for(arm_label: str, seat: Side) -> Player:
+        key = (arm_label, seat)
+        thread = threads.get(key)
+        if thread is None or thread.games >= args.games_per_thread:
+            thread = Thread(LLMPlayer.from_roster(args.opponent, roster))
+            threads[key] = thread
+        thread.games += 1
+        return thread.player
+
     started: float = time.time()
     played: int = 0
     with args.out.open("a") as handle:
-        for seat in (Side.MOUSE, Side.SNAKE):
-            for arm in arms:
-                player: Player = arm.build(rng)
-                # One LLM instance per (arm, seat), as a match would have.
-                try:
-                    opponent: Player = LLMPlayer.from_roster(
-                        args.opponent, roster
-                    )
-                except ConfigError as exc:
-                    parser.error(str(exc))
+        # Passes outermost, arms innermost: an interrupted run then leaves whole
+        # balanced passes plus one partial seed, rather than starving whichever
+        # arms the loop had not reached. A run that stops early is still a fair
+        # comparison, which for a job measured in hours is the difference
+        # between salvageable and wasted.
+        for _pass in range(args.games_per_seed):
+            for seat in (Side.MOUSE, Side.SNAKE):
                 for seed in ALL_SEEDS:
-                    for _ in range(args.games_per_seed):
+                    for arm in arms:
+                        player = players[(arm.label, seat)]
+                        try:
+                            opponent = opponent_for(arm.label, seat)
+                        except ConfigError as exc:
+                            parser.error(str(exc))
                         mouse, snake = (
                             (player, opponent) if seat is Side.MOUSE
                             else (opponent, player)
@@ -171,8 +225,8 @@ def main(argv: list[str] | None = None) -> None:
                         try:
                             result = play_game(mouse, snake, seed=seed)
                         except ModelRequestError as exc:
-                            print(f"\nprovider error, stopping: {exc}",
-                                  file=sys.stderr)
+                            print(f"\nprovider error after {played} games, "
+                                  f"stopping: {exc}", file=sys.stderr)
                             return
                         played += 1
                         handle.write(json.dumps({
@@ -184,8 +238,8 @@ def main(argv: list[str] | None = None) -> None:
                         }) + "\n")
                         handle.flush()
                         elapsed = time.time() - started
-                        print(f"\r{played}/{len(arms) * per_arm} games  "
-                              f"{elapsed / 60:.0f} min  "
+                        print(f"\rpass {_pass + 1}/{args.games_per_seed}  "
+                              f"{played}/{total} games  {elapsed / 60:.0f} min  "
                               f"{elapsed / played:.0f}s/game  "
                               f"[{arm.label} {seat.value} {seed.label}] ",
                               end="", file=sys.stderr, flush=True)
