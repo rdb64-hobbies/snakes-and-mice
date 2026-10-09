@@ -26,10 +26,11 @@
 > self-play (see "Periodic fine-tuning" below).
 >
 > **Only step 1 of "The loop" is built**, the comparison the whole player exists
-> to win has been run and **failed**, and the reason is now understood: no ranking
-> among equally optimal moves moves an LLM's error rate at all, because those
-> errors come from losing track of the board rather than from choosing badly
-> (see "Steering does not work against an LLM", below). The failure in detail: against `qwen-3-8-rtx` over 160
+> to win has been run and **failed**, with the scope of the failure now clear: no
+> ranking among equally optimal moves moves an LLM's error rate at all, measured
+> against a ranking worth 35.7 points against `random` (see "Steering does not
+> work against an LLM", below, which also records that *why* the rate is
+> unmovable remains open). The failure in detail: against `qwen-3-8-rtx` over 160
 > games the trained player wins 6.2% where bare `perfect` wins 8.1% and
 > `perfect-trappiness` 10.0% (see "Measured against qwen-3-8," below). Steps 2–6,
 > which spend live-LLM time, remain to be done and are where any remaining hope
@@ -556,12 +557,30 @@ when the pick is uniform, which is what `random` does and what the 35.7 points
 measure. An LLM picks by its own strong preferences, so the *number* of losing
 replies available says almost nothing about whether it takes one.
 
-What follows is that **this target's blunder rate is not manipulable by position
-selection.** Its errors come from losing track of the board — it is told only the
-move history and must reconstruct occupancy (SPEC.md §4) — rather than from
-choosing badly among options it has seen. Every exploitation strategy available
-here can only arrange the position, and none of them can make a model that has
-lost the board lose it more often.
+What follows, and is measured, is that **this target's blunder rate is not
+manipulable by position selection.** Every exploitation strategy available here
+can only arrange the position, and arranging it does not move the rate.
+
+*Why* the rate is unmovable is **not** established, and an earlier version of
+this section asserted a cause it had no evidence for. The natural guess is that
+the errors come from losing track of a board the model is never shown (SPEC.md
+§4), which would make them indifferent to how the position is arranged. Two
+things weigh against taking that as settled. The direct evidence for it
+evaporated: the five "reoccupied a filled cell" failures were the replay
+harness's own defect ([`SPEC-mistake-model.md`](SPEC-mistake-model.md), "The
+replay harness withheld the defender's own pieces"). And the fitted
+move-preference weights point the other way — `blocks_threat` at **+3.25** says
+the target does attend to threats, while `creates_threat` at **+2.41** and
+`advances_own` at **+1.08** say it prefers building its own lines. That reads as
+choosing offence over defence rather than as failing to see the board, though it
+is fitted on blunders only and so describes the shape of errors rather than their
+cause.
+
+Blunder timing does not settle it either: across 668 recorded blunders they peak
+mid-game (turns 4 and 7) and *fall* at the highest piece counts, which a
+"more board to track" account does not predict — and the per-turn denominator is
+unknown, since the file records only mistakes. So the null is solid and its
+explanation is open.
 
 That accounts for all of it at once:
 
