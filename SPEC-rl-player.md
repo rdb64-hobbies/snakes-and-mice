@@ -486,16 +486,21 @@ label file, `--perfect-share 0.02`, same seed, 8-hour budget, 3,047 iterations
 against its 3,100, **only the shaping differing** — produced
 `rl-models/rl-move-pref.pt`. Measured against `qwen-3-8-rtx`:
 
-| arm | games | W | D | L | win rate | loss rate |
-|---|---:|---:|---:|---:|---:|---:|
-| `rl-move-pref` | **720** | 58 | 617 | 22 | **8.06% ±1.01** | 3.06% |
-| `perfect` (bare) | 160 | 13 | 145 | 0 | 8.12% ±2.16 | **0%** |
-| `rl` (threat-score) | 160 | 10 | 146 | 4 | 6.25% ±1.91 | 2.50% |
+Rates are `won / (won + lost + tied)`, faults excluded from both, which is
+`tally.py`'s definition (SPEC.md §3: a fault is not a win for the opponent). An
+earlier version of this table divided by games played instead, which overstates
+every arm that provokes faults.
 
-**A dead heat: −0.07% ± 2.39%, or 0.03 standard errors.** The criterion is still
-not met, now on 720 games rather than 160, and `perfect` remains better on losses
-by having none. The nominal 1.8% gain over the threat-score term is also inside
-the noise (0.8 SE) and is not claimed.
+| arm | played | clean | W | D | L | forced faults | win rate |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `rl-move-pref` | 720 | **697** | 58 | 617 | 22 | **23** | **8.32% ±1.05** |
+| `perfect` (bare) | 160 | 158 | 13 | 145 | 0 | 2 | 8.23% ±2.19 |
+| `rl` (threat-score) | 160 | 160 | 10 | 146 | 4 | 0 | 6.25% ±1.91 |
+
+**A dead heat against `perfect`: 8.32% against 8.23%.** The criterion is still not
+met, now on 720 games rather than 160, and `perfect` remains better on net by
+conceding none of the 22 losses. The 2.07-point gain over the threat-score term
+is 0.95 SE and is not claimed as a win either.
 
 **A warning about sample size, recorded because it nearly became a false
 entry here.** The first 160 of those games gave 17 W — a 10.62% rate, above
@@ -516,9 +521,21 @@ games each, `rl-move-pref` lost 6% to bare `perfect` and 10% to
 `perfect-trappiness`, against the shipped checkpoint's 3% and 12% — differences
 inside this measurement's noise either way.
 
-`rl-models/rl.pt` therefore remains the shipped player. `rl-move-pref.pt` is kept
-beside it only so the 720-game figure above stays reproducible; nothing loads it
-unless `SNAKES_AND_MICE_RL_MODEL` names it.
+**This is nonetheless the shipped checkpoint**, as of 2026-10-09, and the project
+keeps exactly one: two checkpoints of different strength were both recording as
+Rita/Rasmus, which SPEC.md §6 relies on being one name per strength, and they
+could only be told apart by position in the results file.
+
+The choice does not rest on a resolved win-rate difference, because there isn't
+one. It rests on three things that do separate them: 720 games of
+characterisation against 160, making it by far the best-measured player here;
+indistinguishable robustness (identical 96.2% against `random`; 6% against 3%
+loss to bare `perfect` and 10% against 12% to `perfect-trappiness`, all at n=100
+and all inside the noise); and a forced-fault rate of **3.2% where the
+threat-score model forces none at all** — which is excluded from win rate but is
+a first-class benchmark metric in its own right (SPEC.md §1). Against it is a
+3.2% loss rate against the other's 2.5%, similar, and both lose where `perfect`
+does not.
 
 **What three attempts now say together.** Exact trap counting
 (`perfect-trappiness`), a hand-coded bias score (`perfect-mistake-model`,
@@ -541,13 +558,13 @@ The three results above are all nulls, and they have one cause.
 Measured in a single run of 663 games against `qwen-3-8-rtx`, both arms on
 identical openings (`tools/paired_llm_eval.py`):
 
-| arm | games | wins | win rate |
-|---|---:|---:|---:|
-| `perfect` (bare, no ranking at all) | 363 | 52 | **14.33% ±1.84** |
-| `perfect-trappiness` (exact trap count) | 300 | 43 | **14.33% ±2.02** |
+| arm | played | clean | wins | forced faults | win rate |
+|---|---:|---:|---:|---:|---:|
+| `perfect` (bare, no ranking at all) | 363 | 359 | 48 | 4 | **13.37% ±1.80** |
+| `perfect-trappiness` (exact trap count) | 300 | 297 | 40 | 3 | **13.47% ±1.98** |
 
-Identical. The paired difference is **−0.0075 ± 0.0298**, which excludes any
-true advantage above about 5.5 points. Against the *random* player the same
+Indistinguishable. The paired difference is **−0.0121 ± 0.0290 (0.42 SE)**, which
+excludes any true advantage above about 5.5 points. Against the *random* player the same
 ranking is worth **35.7 points** (62.3% to 98.0%, SPEC-perfect-player.md, "What
 this is worth").
 
@@ -604,9 +621,9 @@ often they occur.
 
 #### Comparisons must live inside one run
 
-Bare `perfect` measured **8.12%** (160 games, 2026-10-05) and **14.33%** (363
-games, 2026-10-08/09) — 6.2 points apart at 2.19 SE, which is more than sampling
-noise comfortably explains. The cause is not identified: a restarted vLLM server,
+Bare `perfect` measured **8.23%** (158 clean games, 2026-10-05) and **13.37%**
+(359, 2026-10-08/09) — 5.1 points apart at 1.82 SE, which sampling noise does not
+comfortably explain. The cause is not identified: a restarted vLLM server,
 changed sampling defaults, or an unlucky draw are all consistent with it.
 
 Each run is internally valid, so each conclusion above holds — this player tied

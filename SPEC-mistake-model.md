@@ -410,10 +410,10 @@ the first two never needed to know the score's magnitude, but a tie-break is a
 ranking, and rankings are exactly where magnitude would seem to matter.
 
 **The tie-break role is measured worthless, 2026-10-09.** Against
-`qwen-3-8-rtx`, `perfect-mistake-model` wins 16.0% (8 of 50) where
-`perfect-trappiness` wins 14.33% (43 of 300) and bare `perfect` 14.33% (52 of
-363) — the paired difference against trappiness is +0.0167 ± 0.0582, which is
-nothing. The claim above that this score is "the better-evidenced approximation
+`qwen-3-8-rtx`, `perfect-mistake-model` wins 12.50% (6 of 48 clean games) where
+`perfect-trappiness` wins 13.47% (40 of 297) and bare `perfect` 13.37% (48 of
+359) — the paired difference against trappiness is −0.0125 ± 0.0533, which is
+nothing, and if anything points the wrong way. The claim above that this score is "the better-evidenced approximation
 of the two" is not supported by play: it ties the key it replaced, and both tie
 having no key at all. The reason is not specific to this score —
 SPEC-perfect-player.md, "What this is worth" finds that *no* ranking among

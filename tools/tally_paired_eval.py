@@ -16,10 +16,16 @@ pairing bought anything. On the first real run it did not: 0.0665 against 0.0670
 and worse than unpaired on another comparison. The design is free and cannot hurt,
 but the fix for noise here is games, not pairing.
 
-A game is scored +1 for a win, -1 for a loss, 0 for a draw. An opponent fault
-counts as a win and the arm's own fault as a loss, since a fault decides the game
-exactly as a completed line does (SPEC.md §3). Aborted games are dropped: a
-no-contest is charged to neither side.
+Scoring follows `tally.py`, which is the project's canonical definition and
+disagrees with the obvious guess: a **fault is not a win for the opponent**
+(SPEC.md §3), and a faulted game leaves the win-rate base altogether —
+`win_rate = won / (won + lost + tied)`. So faults are counted and reported in
+their own column, never folded into wins. An earlier version of this tool scored
+a forced fault as +1 and kept it in the denominator, which inflated every arm
+that provoked faults; the RL player provokes them at three times a `perfect`
+variant's rate, so that was not a small error.
+
+Aborted games are dropped: a no-contest is charged to neither side.
 
     uv run python tools/tally_paired_eval.py [paired-eval.jsonl]
 """
@@ -29,40 +35,47 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from typing import Final
 
-SCORE: Final[dict[str, float]] = {
-    "win": 1.0, "fault_theirs": 1.0,
-    "draw": 0.0,
-    "loss": -1.0, "fault_ours": -1.0,
-}
+SCORE: Final[dict[str, float]] = {"win": 1.0, "draw": 0.0, "loss": -1.0}
+"""Per-game score for the paired difference. Faults are excluded, not scored:
+they are their own outcome (SPEC.md §3) and belong in neither direction."""
 
-WINS: Final[frozenset[str]] = frozenset({"win", "fault_theirs"})
-LOSSES: Final[frozenset[str]] = frozenset({"loss", "fault_ours"})
+FAULTS: Final[frozenset[str]] = frozenset({"fault_theirs", "fault_ours"})
 
 
 @dataclass(frozen=True)
 class Marginal:
-    """One arm's overall record."""
+    """One arm's record, split the way `tally.py` splits it."""
 
-    games: int
     wins: int
     draws: int
     losses: int
+    forced: int   # games the opponent faulted
+    conceded: int  # games this arm faulted
+
+    @property
+    def clean(self) -> int:
+        """Games decided or drawn with neither side faulting — the win-rate base."""
+        return self.wins + self.draws + self.losses
+
+    @property
+    def played(self) -> int:
+        return self.clean + self.forced + self.conceded
 
     @property
     def rate(self) -> float:
-        return self.wins / self.games if self.games else 0.0
+        return self.wins / self.clean if self.clean else 0.0
 
     @property
     def error(self) -> float:
         """Binomial standard error of :attr:`rate`."""
         p = self.rate
-        return math.sqrt(p * (1 - p) / self.games) if self.games else 0.0
+        return math.sqrt(p * (1 - p) / self.clean) if self.clean else 0.0
 
 
 def load(path: Path) -> list[dict[str, str]]:
@@ -73,12 +86,10 @@ def load(path: Path) -> list[dict[str, str]]:
 def marginals(rows: list[dict[str, str]]) -> dict[str, Marginal]:
     out: dict[str, Marginal] = {}
     for arm in sorted({r["arm"] for r in rows}):
-        outcomes = [r["outcome"] for r in rows
-                    if r["arm"] == arm and r["outcome"] != "abort"]
-        wins = sum(1 for o in outcomes if o in WINS)
-        losses = sum(1 for o in outcomes if o in LOSSES)
-        out[arm] = Marginal(len(outcomes), wins,
-                            len(outcomes) - wins - losses, losses)
+        got = Counter(r["outcome"] for r in rows
+                      if r["arm"] == arm and r["outcome"] != "abort")
+        out[arm] = Marginal(got["win"], got["draw"], got["loss"],
+                            got["fault_theirs"], got["fault_ours"])
     return out
 
 
@@ -88,7 +99,7 @@ def units(rows: list[dict[str, str]]) -> dict[tuple[str, str], dict[str, list[fl
         lambda: defaultdict(list)
     )
     for r in rows:
-        if r["outcome"] == "abort":
+        if r["outcome"] == "abort" or r["outcome"] in FAULTS:
             continue
         got[(r["seed"], r["seat"])][r["arm"]].append(SCORE[r["outcome"]])
     return got
@@ -114,10 +125,12 @@ def main(argv: list[str] | None = None) -> None:
     against: str = ", ".join(opponents) if opponents else "(unnamed)"
     print(f"{len(rows)} games vs {against}; "
           f"{len(per_arm)} arms over {len(matched)} (seed, seat) units\n")
-    print(f"{'arm':<24}{'games':>6}{'W':>5}{'D':>6}{'L':>4}{'win%':>8}{'+-':>7}")
+    print(f"{'arm':<24}{'played':>7}{'clean':>6}{'W':>5}{'D':>6}{'L':>4}"
+          f"{'forced':>7}{'win%':>8}{'+-':>7}")
     for arm, m in per_arm.items():
-        print(f"{arm:<24}{m.games:>6}{m.wins:>5}{m.draws:>6}{m.losses:>4}"
-              f"{100 * m.rate:>7.2f}%{100 * m.error:>6.2f}%")
+        print(f"{arm:<24}{m.played:>7}{m.clean:>6}{m.wins:>5}{m.draws:>6}"
+              f"{m.losses:>4}{m.forced:>7}{100 * m.rate:>7.2f}%"
+              f"{100 * m.error:>6.2f}%")
 
     print(f"\n{'paired comparison':<40}{'n':>4}{'mean diff':>11}{'+-':>8}"
           f"{'SE':>6}{'unpaired +-':>13}{'verdict':>12}")

@@ -270,9 +270,11 @@ model of it, and the gain against a model will differ.
 
 **Measured 2026-10-09, and the gain against a model is zero.** Over 663 games
 against `qwen-3-8-rtx` in one run, both arms on identical openings:
-`perfect-trappiness` wins **14.33%** (43 of 300) and bare `perfect` wins
-**14.33%** (52 of 363) — a paired difference of −0.0075 ± 0.0298, excluding any
-true advantage above about 5.5 points. The mechanism worth **35.7 points**
+`perfect-trappiness` wins **13.47%** (40 of 297 clean games) and bare `perfect`
+wins **13.37%** (48 of 359) — a paired difference of −0.0121 ± 0.0290, 0.42
+standard errors, excluding any true advantage above about 5.5 points. Rates are
+`won / (won + lost + tied)` per the tally in SPEC.md §6; the two forced three and
+four faults respectively, which are excluded from both. The mechanism worth **35.7 points**
 against the random player is worth at most a sixth of that against this LLM and
 measures at nothing.
 
