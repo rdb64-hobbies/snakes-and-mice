@@ -417,9 +417,9 @@ nothing. The claim above that this score is "the better-evidenced approximation
 of the two" is not supported by play: it ties the key it replaced, and both tie
 having no key at all. The reason is not specific to this score —
 SPEC-perfect-player.md, "What this is worth" finds that *no* ranking among
-equally optimal moves moves an LLM's error rate, because those errors come from
-losing track of the board rather than from choosing badly among seen options.
-The first two roles are unaffected by this; they do not rank moves.
+equally optimal moves moves an LLM's error rate, whatever the cause of that
+turns out to be. The first two roles are unaffected by this; they do not rank
+moves.
 
 ### What validation means for a shaping term: direction, not magnitude
 
