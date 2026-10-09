@@ -25,8 +25,11 @@
 > below); and periodically training and evaluating against real LLMs alongside
 > self-play (see "Periodic fine-tuning" below).
 >
-> **Only step 1 of "The loop" is built**, and the comparison the whole player
-> exists to win has now been run and **failed**: against `qwen-3-8-rtx` over 160
+> **Only step 1 of "The loop" is built**, the comparison the whole player exists
+> to win has been run and **failed**, and the reason is now understood: no ranking
+> among equally optimal moves moves an LLM's error rate at all, because those
+> errors come from losing track of the board rather than from choosing badly
+> (see "Steering does not work against an LLM", below). The failure in detail: against `qwen-3-8-rtx` over 160
 > games the trained player wins 6.2% where bare `perfect` wins 8.1% and
 > `perfect-trappiness` 10.0% (see "Measured against qwen-3-8," below). Steps 2–6,
 > which spend live-LLM time, remain to be done and are where any remaining hope
@@ -523,13 +526,76 @@ unless `SNAKES_AND_MICE_RL_MODEL` names it.
 to any competent opponent, and *converting more of them than exact search does*
 is the part none of these has moved.
 
-What is not ruled out is the rest of the loop. Steps 2-6 have never been run: the
-agent has never played an LLM in training, and its pool was self-play 58.8%,
-`random` 39.2%, `perfect` 2%. A learned move-preference model fitted to the
-collected blunders (ibid.) predicts qwen's chosen move at 9x the chance rate and
-captures a mechanism the three-level score cannot — that this model plays offence
-when it should defend. Shaping on that, rather than on split threats alone, is the
-untried idea with evidence behind it.
+What was not then ruled out was the rest of the loop — steps 2–6, the agent never
+having played an LLM in training. That has since been narrowed sharply: shaping on
+the fitted move-preference model was tried and measured flat (above), and
+"Steering does not work against an LLM" explains why no position-selection
+strategy should be expected to help. What remains genuinely untried is only the
+part that changes *what the agent learns from*, not how it is steered.
+
+### Steering does not work against an LLM, 2026-10-09
+
+The three results above are all nulls, and they have one cause.
+
+Measured in a single run of 663 games against `qwen-3-8-rtx`, both arms on
+identical openings (`tools/paired_llm_eval.py`):
+
+| arm | games | wins | win rate |
+|---|---:|---:|---:|
+| `perfect` (bare, no ranking at all) | 363 | 52 | **14.33% ±1.84** |
+| `perfect-trappiness` (exact trap count) | 300 | 43 | **14.33% ±2.02** |
+
+Identical. The paired difference is **−0.0075 ± 0.0298**, which excludes any
+true advantage above about 5.5 points. Against the *random* player the same
+ranking is worth **35.7 points** (62.3% to 98.0%, SPEC-perfect-player.md, "What
+this is worth").
+
+**The trap count is the right statistic only for a uniformly-choosing
+opponent.** Counting an opponent's losing replies raises P(it picks one) exactly
+when the pick is uniform, which is what `random` does and what the 35.7 points
+measure. An LLM picks by its own strong preferences, so the *number* of losing
+replies available says almost nothing about whether it takes one.
+
+What follows is that **this target's blunder rate is not manipulable by position
+selection.** Its errors come from losing track of the board — it is told only the
+move history and must reconstruct occupancy (SPEC.md §4) — rather than from
+choosing badly among options it has seen. Every exploitation strategy available
+here can only arrange the position, and none of them can make a model that has
+lost the board lose it more often.
+
+That accounts for all of it at once:
+
+- **This player** at 8.06% against bare `perfect`'s 8.12% in the same run.
+- **The move-preference shaping term**, which predicts the target's chosen move
+  at 9x the chance rate and bought nothing: predicting *which* move it picks is
+  not the same as being able to raise the chance that the move is a losing one.
+- **`perfect-mistake-model`** tying `perfect-trappiness` exactly
+  ([`SPEC-mistake-model.md`](SPEC-mistake-model.md), "Three roles, one
+  function").
+- **Three unrelated strategies** — exact trap counting, a hand-coded bias score,
+  a fitted move-preference model — all landing in the same band.
+
+So the Goal's premise needs qualifying. Its claim, that "an LLM's mistakes may be
+systematically biased rather than random", is **true and measured**: the bias is
+real, 588 blunders concentrate 5.3x on split threats per opportunity, and a
+fitted model predicts the target's choices at 9x chance. What does not follow,
+and what the Goal assumed, is that a *systematic* bias is therefore an
+*exploitable* one. A bias in which errors occur does not imply any lever over how
+often they occur.
+
+#### Comparisons must live inside one run
+
+Bare `perfect` measured **8.12%** (160 games, 2026-10-05) and **14.33%** (363
+games, 2026-10-08/09) — 6.2 points apart at 2.19 SE, which is more than sampling
+noise comfortably explains. The cause is not identified: a restarted vLLM server,
+changed sampling defaults, or an unlucky draw are all consistent with it.
+
+Each run is internally valid, so each conclusion above holds — this player tied
+`perfect` within its run, and trappiness tied `perfect` within this one. But
+**the absolute level moves between sessions, so no number here should be compared
+against a number from another one.** Any comparison that matters must put its
+arms in the same run, which is what `paired_llm_eval.py` is for. That, rather
+than the pairing, turned out to be its value.
 
 ### What is still open
 

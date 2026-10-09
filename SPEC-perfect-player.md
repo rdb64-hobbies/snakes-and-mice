@@ -268,6 +268,30 @@ the rest. The caveat on the numbers is that a random opponent misses traps unifo
 whereas an LLM misses _subtle_ ones, so trap density is a proxy for that rather than a
 model of it, and the gain against a model will differ.
 
+**Measured 2026-10-09, and the gain against a model is zero.** Over 663 games
+against `qwen-3-8-rtx` in one run, both arms on identical openings:
+`perfect-trappiness` wins **14.33%** (43 of 300) and bare `perfect` wins
+**14.33%** (52 of 363) — a paired difference of −0.0075 ± 0.0298, excluding any
+true advantage above about 5.5 points. The mechanism worth **35.7 points**
+against the random player is worth at most a sixth of that against this LLM and
+measures at nothing.
+
+The reason is the caveat above, sharpened: **the trap count is the right
+statistic only for a uniformly-choosing opponent.** More losing replies raises
+P(the opponent picks one) exactly when the pick is uniform. An LLM picks by its
+own strong preferences, so how *many* losing replies exist says almost nothing
+about whether it takes one — its errors come from failing to track the board
+rather than from choosing badly among options it has seen, and no arrangement of
+the position changes that. `SPEC-rl-player.md`, "Steering does not work against
+an LLM" collects the evidence, which also accounts for three unrelated
+exploitation strategies all landing in the same band.
+
+This does not make the ranking pointless: it remains the better player against
+`random`, never risks a draw, and costs nothing. It does mean **the benchmark's
+LLM results are not measurably affected by which `perfect` variant produced
+them**, which is worth knowing before attributing any difference between them to
+strength.
+
 Ranking is **not configurable on a name**: each name always does one thing. A flag
 that changed a player's behavior in place would make one name mean two different
 strengths, and a results file identifies a player by name alone (SPEC.md §6) — so the

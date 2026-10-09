@@ -409,6 +409,18 @@ Adding this third consumer is why the caveat below needs its own paragraph:
 the first two never needed to know the score's magnitude, but a tie-break is a
 ranking, and rankings are exactly where magnitude would seem to matter.
 
+**The tie-break role is measured worthless, 2026-10-09.** Against
+`qwen-3-8-rtx`, `perfect-mistake-model` wins 16.0% (8 of 50) where
+`perfect-trappiness` wins 14.33% (43 of 300) and bare `perfect` 14.33% (52 of
+363) — the paired difference against trappiness is +0.0167 ± 0.0582, which is
+nothing. The claim above that this score is "the better-evidenced approximation
+of the two" is not supported by play: it ties the key it replaced, and both tie
+having no key at all. The reason is not specific to this score —
+SPEC-perfect-player.md, "What this is worth" finds that *no* ranking among
+equally optimal moves moves an LLM's error rate, because those errors come from
+losing track of the board rather than from choosing badly among seen options.
+The first two roles are unaffected by this; they do not rank moves.
+
 ### What validation means for a shaping term: direction, not magnitude
 
 Real per-move mistakes are rare — about 2% ("Result," above) — far too rare for

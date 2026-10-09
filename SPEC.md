@@ -1195,7 +1195,10 @@ What the rest of this document relies on:
   go wrong, which makes it dangerous without ever risking the draw, and
   `perfect-mistake-model` ranks by a hand-coded LLM-bias feature instead; those two
   are the non-learned baselines SPEC-rl-player.md needs to measure the RL player
-  against. All three are equally optimal and each has its own display names, so a
+  against. **Both rankings are worth nothing against an LLM**, measured: all three
+  variants win the same share of games against `qwen-3-8-rtx`, though trappiness
+  remains far stronger against `random` (SPEC-perfect-player.md, "What this is
+  worth"). All three are equally optimal and each has its own display names, so a
   results file (§6) reads one strength per name. **`perfect` meant the trappiness
   player before 1.8**, under the display names the bare name still carries, so results
   recorded under them before and after 1.8 are not comparable — the one deliberate
