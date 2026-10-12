@@ -7,7 +7,8 @@ and nothing here is an endorsement of, or a knock against, any model in
 general. After all, it's just snakes and mice.
 
 The first section covers six locally-served open-weight models. The second
-covers closed-weight frontier models, reached through their vendors' APIs.
+covers closed-weight frontier models, reached through their vendors' APIs, and
+the third covers open-weight frontier models, reached through a hosted router.
 
 ## 1. Local LLMs
 
@@ -214,3 +215,89 @@ But **gemini-3-8** has not lost in any of its 1,000 games.
 gpt-6-luna, considerably the cheapest of the five, is the one that doesn't hold
 up: its loss and fault rates are far from those of its four closed-weight
 peers.
+
+## 3. Open-weight frontier LLMs
+
+Three open-weight frontier models, hosted rather than served locally (all via
+OpenRouter): **kimi-k3**, **glm-5-3**, and **deepseek-v4**, each at medium
+thinking. They were not played against `perfect-trappiness`. Each played 200
+games against two opponents, 100 apiece: `rl` and `perfect-mistake-model`
+(§3.1). They then played each other in a round-robin (§3.2).
+
+### 3.1 Losses and faults against RL and the perfect mistake model
+
+| Model | Games | Lost | Loss % | Faulted | Fault % |
+|---|---:|---:|---:|---:|---:|
+| **deepseek-v4** | 200 | 2 | 1.0% | 6 | 3.0% |
+| glm-5-3 | 200 | 18 | 9.2% | 5 | 2.5% |
+| kimi-k3 | 200 | 28 | 14.1% | 2 | 1.0% |
+
+Sorted best-to-worst by losses. Loss % is losses over games where neither side
+faulted; Fault % is faults over games played. The same counts by opponent,
+lost / faulted out of 100 games each:
+
+| Model | vs. rl | vs. perfect-mistake-model |
+|---|---:|---:|
+| deepseek-v4 | 0 / 1 | 2 / 5 |
+| glm-5-3 | 8 / 1 | 10 / 4 |
+| kimi-k3 | 17 / 1 | 11 / 1 |
+
+The fault breakdown across both opponents:
+
+- **deepseek-v4**: thinking limit exceeded ×6
+- **glm-5-3**: misjudged its own outcome ×4, miscounted pieces ×1
+- **kimi-k3**: misjudged its own outcome ×1, miscounted pieces ×1
+
+Faults are rare for all three, so the separation is in the losses.
+**deepseek-v4** is the standout: it lost twice in 200 games, and all six of its
+faults were running out of thinking budget. **glm-5-3** and **kimi-k3** are far
+less steady, each losing to the perfect mistake model (which can't be beaten)
+10 or 11 times in 100, and to `rl` another 8 and 17. Against `rl`,
+**deepseek-v4** won 24 games of 100, **kimi-k3** 13, and **glm-5-3** 4.
+
+### 3.2 Head-to-head among the three
+
+Each pair played 100 games, both seats.
+
+| Model | Played | Won | Lost | Tied | Faulted | Win % | Loss % | Fault % |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **deepseek-v4** | 200 | 22 | 1 | 133 | 5 | 14.1% | 0.6% | 2.5% |
+| kimi-k3 | 200 | 10 | 16 | 144 | 7 | 5.9% | 9.4% | 3.5% |
+| glm-5-3 | 200 | 7 | 22 | 113 | 54 | 4.9% | 15.5% | 27.0% |
+
+(Played also counts games won because the opponent faulted, so a row doesn't
+sum to its Played.) The faults:
+
+- **deepseek-v4**: thinking limit exceeded ×5
+- **kimi-k3**: misjudged its own outcome ×4, miscounted pieces ×2, illegal move
+  (cell occupied) ×1
+- **glm-5-3**: unparseable output ×34, misjudged its own outcome ×10,
+  miscounted pieces ×9, thinking limit exceeded ×1
+
+**Head-to-head matrix** — cell (row, column) is the row player's losses to the
+column player:
+
+|                   | 1. deepseek-v4 | 2. kimi-k3 | 3. glm-5-3 |
+|---|---:|---:|---:|
+| **1. deepseek-v4** | — | 1 | 0 |
+| **2. kimi-k3**     | 9 | — | 7 |
+| **3. glm-5-3**     | 13 | 9 | — |
+
+**deepseek-v4** again leads, beating both others (9–1 over kimi-k3, 13–0 over
+glm-5-3). The other two swap places from §3.1: **kimi-k3** beats glm-5-3 (9–7)
+even though it lost more to `rl`. glm-5-3's last place owes a lot to faults,
+though: over a quarter of its games ended in one, most of them unparseable
+output rather than bad play.
+
+### 3.3 Takeaway
+
+deepseek-v4 is the strongest of the three by a wide margin, and on losses it is
+the only one that plays like the closed-weight models of §2. kimi-k3 and
+glm-5-3 lose often, to the perfect mistake model as well as to each other.
+
+One caveat on deepseek-v4's faults. OpenRouter picks the backend per request,
+and in a test match of deepseek-v4 an Alibaba-hosted backend ran about ten times
+longer reasoning than CoreWeave and hit the output cap, while the same turns on
+CoreWeave were fine. The tournament file doesn't record which backend served
+each game, so some of its thinking-limit faults may be the backend's doing
+rather than the model's.
