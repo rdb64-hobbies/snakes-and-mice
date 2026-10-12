@@ -6,8 +6,8 @@ Take them for what they are and no more — a game is a narrow and quirky test,
 and nothing here is an endorsement of, or a knock against, any model in
 general. After all, it's just snakes and mice.
 
-This first section covers six locally-served open-weight models. A later
-section will cover frontier (hosted-API) models.
+The first section covers six locally-served open-weight models. The second
+covers closed-weight frontier models, reached through their vendors' APIs.
 
 ## 1. Local LLMs
 
@@ -117,6 +117,100 @@ coming from a lower fault rate (17.7% vs. 19.7%) and fewer overall losses —
 essentially a toss-up between the two, well behind qwen-3-8 and well ahead of
 gemma-4.
 
-## 2. Frontier LLMs
+## 2. Closed-weight frontier LLMs
 
-_To be added._
+Five closed-weight frontier models: **opus-5-5**, **sonnet-5-5**,
+**gpt-6-1-sol**, **gpt-6-luna**, and **gemini-3-8**. All five were set to
+medium thinking. Each played 600 games against three fixed opponents, 200
+apiece: `rl`, `perfect-trappiness`, and `perfect-mistake-model` (§2.1). They
+then played each other in a round-robin (§2.2).
+
+### 2.1 Losses and faults against RL and the two perfect players
+
+| Model | Games | Lost | Loss % | Faulted | Fault % |
+|---|---:|---:|---:|---:|---:|
+| **gemini-3-8** | 600 | 0 | 0.0% | 1 | 0.2% |
+| opus-5-5 | 600 | 1 | 0.2% | 8 | 1.3% |
+| sonnet-5-5 | 600 | 3 | 0.5% | 0 | 0.0% |
+| gpt-6-1-sol | 600 | 4 | 0.7% | 4 | 0.7% |
+| gpt-6-luna | 600 | 80 | 15.2% | 72 | 12.0% |
+
+Sorted best-to-worst by losses. Loss % is losses over games where neither side
+faulted; Fault % is faults over games played. The same counts by opponent,
+lost / faulted out of 200 games each:
+
+| Model | vs. rl | vs. perfect-trappiness | vs. perfect-mistake-model |
+|---|---:|---:|---:|
+| gemini-3-8 | 0 / 0 | 0 / 1 | 0 / 0 |
+| opus-5-5 | 0 / 4 | 0 / 0 | 1 / 4 |
+| sonnet-5-5 | 2 / 0 | 0 / 0 | 1 / 0 |
+| gpt-6-1-sol | 1 / 2 | 1 / 0 | 2 / 2 |
+| gpt-6-luna | 9 / 25 | 34 / 20 | 37 / 27 |
+
+The fault breakdown across all three opponents:
+
+- **gemini-3-8**: misjudged its own outcome ×1
+- **opus-5-5**: miscounted pieces ×8
+- **sonnet-5-5**: none
+- **gpt-6-1-sol**: misjudged its own outcome ×3, miscounted pieces ×1
+- **gpt-6-luna**: miscounted pieces ×37, misjudged its own outcome ×33,
+  illegal move (cell occupied) ×2
+
+Four of the five almost never lose. Across their 2,400 games against these three
+opponents they lost eight, and **gemini-3-8** has yet to lose a single one. Their faults are just as
+rare, and they are bookkeeping slips (a wrong piece count or a wrong claim about
+the game's outcome), not thinking-budget blowouts or unplayable moves like
+those in §1.1. **gpt-6-luna** is the outlier: it loses about one game in seven
+and faults about one in eight. Its losses are mostly to the two perfect
+players (34 and 37 of 80), who can't be beaten, so each of those was a game it
+threw away. It fares best against `rl`, which is beatable.
+
+Wins are where the opponent matters. Against the two perfect players the four
+strong models can only draw, and they nearly always do. Against `rl`, which is
+strong but not perfect, they win: **opus-5-5** 49 of its 200 games, **gemini-3-8**
+29, **sonnet-5-5** 23, **gpt-6-1-sol** 21, and even **gpt-6-luna** 5.
+
+### 2.2 Head-to-head among the five
+
+Each pair of the five played each other, both seats, 100 games per pairing.
+
+| Model | Played | Won | Lost | Tied | Faulted | Win % | Loss % | Fault % |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **opus-5-5** | 400 | 6 | 0 | 373 | 3 | 1.6% | 0.0% | 0.8% |
+| gpt-6-1-sol | 400 | 4 | 0 | 372 | 4 | 1.1% | 0.0% | 1.0% |
+| sonnet-5-5 | 400 | 2 | 0 | 375 | 2 | 0.5% | 0.0% | 0.5% |
+| gemini-3-8 | 400 | 2 | 0 | 378 | 1 | 0.5% | 0.0% | 0.2% |
+| gpt-6-luna | 400 | 0 | 14 | 318 | 68 | 0.0% | 4.2% | 17.0% |
+
+(Played also counts games won because the opponent faulted, so a row doesn't
+sum to its Played.)
+
+**Head-to-head matrix** — cell (row, column) is the row player's losses to the
+column player:
+
+|                    | 1. opus-5-5 | 2. gpt-6-1-sol | 3. sonnet-5-5 | 4. gemini-3-8 | 5. gpt-6-luna |
+|---|---:|---:|---:|---:|---:|
+| **1. opus-5-5**    | — | 0 | 0 | 0 | 0 |
+| **2. gpt-6-1-sol** | 0 | — | 0 | 0 | 0 |
+| **3. sonnet-5-5**  | 0 | 0 | — | 0 | 0 |
+| **4. gemini-3-8**  | 0 | 0 | 0 | — | 0 |
+| **5. gpt-6-luna**  | 6 | 4 | 2 | 2 | — |
+
+The four strong models never beat one another: every decided game in the
+round-robin is a gpt-6-luna loss, and the other four rows of the matrix are
+zeros. So the head-to-head tells us little. Those four are not separable by
+this test, and the ordering in the table is just the luck of whose games luna
+happened to lose.
+
+### 2.3 Takeaway
+
+With the exception of gpt-6-luna, the closed-weight frontier models play
+extremely well. Against opponents that are either unbeatable or at least
+strong, and against each other, they almost always draw, they very rarely
+lose, and when they fault it is a slip in counting or in reading the outcome.
+They are not perfect: opus-5-5, sonnet-5-5, and gpt-6-1-sol each lost at
+least once, always to `rl` or one of the perfect players, never to each other.
+But **gemini-3-8** has not lost in any of its 1,000 games.
+gpt-6-luna, considerably the cheapest of the five, is the one that doesn't hold
+up: its loss and fault rates are far from those of its four closed-weight
+peers.
