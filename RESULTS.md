@@ -9,6 +9,7 @@ general. After all, it's just snakes and mice.
 The first section covers six locally-served open-weight models. The second
 covers closed-weight frontier models, reached through their vendors' APIs, and
 the third covers open-weight frontier models, reached through a hosted router.
+The fourth puts the best of each group against each other.
 
 ## 1. Local LLMs
 
@@ -301,3 +302,35 @@ longer reasoning than CoreWeave and hit the output cap, while the same turns on
 CoreWeave were fine. The tournament file doesn't record which backend served
 each game, so some of its thinking-limit faults may be the backend's doing
 rather than the model's.
+
+## 4. Best of each group
+
+The best model from each category above played a round-robin against the other
+two: **gemini-3-8** (closed-weight frontier, §2), **deepseek-v4** (open-weight
+frontier, §3), and **qwen-3-8** (local, §1; served from the RTX box), 100 games per
+pairing, both seats.
+
+| Model | Played | Won | Lost | Tied | Faulted | Win % | Loss % | Fault % |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| **gemini-3-8** | 399 | 8 | 0 | 360 | 0 | 2.2% | 0.0% | 0.0% |
+| deepseek-v4 | 399 | 7 | 0 | 361 | 27 | 1.9% | 0.0% | 6.8% |
+| qwen-3-8 | 400 | 0 | 15 | 369 | 12 | 0.0% | 3.9% | 3.0% |
+
+(One gemini-3-8 vs. deepseek-v4 game was aborted, hence 399. Played also counts
+games won because the opponent faulted, so a row doesn't sum to its Played.)
+
+**Head-to-head matrix** — cell (row, column) is the row player's losses to the
+column player:
+
+|                    | 1. gemini-3-8 | 2. deepseek-v4 | 3. qwen-3-8 |
+|---|---:|---:|---:|
+| **1. gemini-3-8**  | — | 0 | 0 |
+| **2. deepseek-v4** | 0 | — | 0 |
+| **3. qwen-3-8**    | 8 | 7 | — |
+
+Gemini-3-8 and deepseek-v4 never beat each other or lost to qwen-3-8; every
+decided game in the round-robin is a qwen-3-8 loss (8 to gemini-3-8, 7 to
+deepseek-v4). So the two leaders can't be separated by wins, and what
+distinguishes them is faults: deepseek-v4 had 27, mostly unparseable output
+(20) against gemini-3-8, while gemini-3-8 had none. qwen-3-8 is third, but it
+lost only 15 of 400 games, and 369 were draws.
